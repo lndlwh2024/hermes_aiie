@@ -114,7 +114,7 @@ CURSOR_BRIDGE_ALLOWED_USERS
 当前白名单用户：
 
 ```text
-7152783592
+<telegram_user_id>
 ```
 
 可选：
@@ -283,7 +283,7 @@ POST /api/tasks
 ```json
 {
   "source": "telegram",
-  "chatId": "7152783592",
+  "chatId": "<telegram_chat_id>",
   "user": "telegram-user",
   "text": "需要处理的消息"
 }
@@ -394,7 +394,7 @@ C:\Users\lndlw\AppData\Local\hermes\SOUL.md
 - `auxiliary.vision`、`auxiliary.compression`、`auxiliary.title_generation` 等从 `auto` 改为显式 `gemini-2.0-flash`。
 - `load_soul_md()` 改为 `utf-8-sig` 读取，自动剥离 BOM。
 - `SOUL.md` 写入中文默认 persona：默认中文、简洁、直接。
-- Telegram DM `7152783592` 增加 channel prompt：默认中文回复。
+- Telegram DM `<telegram_chat_id>` 增加 channel prompt：默认中文回复。
 
 ### 11.4 验证结果
 
@@ -461,7 +461,7 @@ H:\agent\hermes\debug\hermes_system_prompt_20260508_200924_1a8294fb_utf8.md
 2. 恢复 Gemini `x-goog-api-key` 改写逻辑。
 3. 将 `config.yaml` 中 `auxiliary.*.provider` 改回 `auto`。
 4. 将 `prompt_builder.py` 的 `SOUL.md` 读取编码改回 `utf-8`。
-5. 移除 Telegram `channel_prompts.7152783592`。
+5. 移除 Telegram `channel_prompts.<telegram_chat_id>`。
 6. 重启 Hermes Gateway。
 
 不建议回滚第 1、2、4 项；这些是明确根因修复，回滚后会恢复超时、认证错误或中文 persona 阻断。

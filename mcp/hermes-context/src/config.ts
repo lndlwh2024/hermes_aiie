@@ -2,8 +2,8 @@ import path from "node:path";
 
 export interface ProjectConfig {
   key: string;
+  projectRoot: string;
   contextRoot: string;
-  mirrorRoot: string;
   profileFile: string;
 }
 
@@ -16,9 +16,9 @@ export const AUDIT_LOG_PATH =
 export const PROJECTS: Record<string, ProjectConfig> = {
   news: {
     key: "news",
-    contextRoot: path.join(HERMES_ROOT, "contexts", "news"),
-    mirrorRoot: "H:\\AIcode\\Trae\\news\\hermes",
-    profileFile: "project-profile.md"
+    projectRoot: "H:\\AIcode\\Trae\\news",
+    contextRoot: "H:\\AIcode\\Trae\\news\\hermes",
+    profileFile: path.join("profile", "project-profile.md")
   }
 };
 

@@ -8,7 +8,6 @@ export interface ContextSource {
   path: string;
   category: string;
   size: number;
-  origin: "context" | "mirror";
 }
 
 export interface AppendLessonInput {
@@ -16,21 +15,61 @@ export interface AppendLessonInput {
   category: ContextCategory;
   title: string;
   content: string;
-  mirror?: boolean;
+  dedupe?: boolean;
 }
 
 export interface AppendLessonResult {
   ok: true;
   writtenTo: string;
-  mirroredTo?: string;
+  duplicate?: boolean;
 }
 
-const CATEGORY_TO_CONTEXT_FILE: Record<ContextCategory, string> = {
-  profile: "project-profile.md",
-  incidents: "incident-log.md",
-  lessons: "incident-log.md",
-  skills: "incident-log.md"
+export interface RouteContextNeedInput {
+  project: string;
+  request: string;
+}
+
+export interface RouteContextNeedResult {
+  project: string;
+  needsContext: boolean;
+  reason: string;
+  query?: string;
+  category?: ContextCategory;
+  matchedKeywords: string[];
+}
+
+const CATEGORY_TO_DIR: Record<ContextCategory, string> = {
+  profile: "profile",
+  incidents: "incidents",
+  lessons: "lessons",
+  skills: "skills"
 };
+
+const GENERIC_CONTEXT_KEYWORDS = [
+  "之前",
+  "又出现",
+  "回滚后",
+  "曾经修过",
+  "历史",
+  "复盘",
+  "故障",
+  "报错",
+  "失败",
+  "部署",
+  "数据库",
+  "鉴权",
+  "监控",
+  "rollback",
+  "history",
+  "incident",
+  "regression",
+  "again",
+  "previous",
+  "deployment",
+  "database",
+  "auth",
+  "monitoring"
+];
 
 function assertCategory(category: string): asserts category is ContextCategory {
   if (!ALLOWED_CATEGORIES.includes(category as ContextCategory)) {
@@ -67,32 +106,11 @@ function relativeTo(root: string, filePath: string): string {
   return path.relative(root, filePath).replace(/\\/g, "/");
 }
 
-async function readableRoots(config: ProjectConfig): Promise<Array<{ origin: "context" | "mirror"; root: string }>> {
-  const candidates: Array<{ origin: "context" | "mirror"; root: string }> = [
-    { origin: "context", root: config.contextRoot },
-    { origin: "mirror", root: config.mirrorRoot }
-  ];
-  const roots: Array<{ origin: "context" | "mirror"; root: string }> = [];
-
-  for (const candidate of candidates) {
-    try {
-      const stat = await fs.stat(candidate.root);
-      if (stat.isDirectory()) {
-        roots.push(candidate);
-      }
-    } catch {
-      // Missing mirror/context roots are ignored; project config still controls allowed paths.
-    }
-  }
-
-  return roots;
-}
-
-function mirrorCategoryPath(config: ProjectConfig, category: ContextCategory, title: string): string {
+function contextCategoryPath(config: ProjectConfig, category: ContextCategory, title: string): string {
   if (category === "profile") {
-    return path.join(config.mirrorRoot, "profile", "project-profile.md");
+    return path.join(config.contextRoot, "profile", "project-profile.md");
   }
-  return path.join(config.mirrorRoot, category, `${slugify(title)}.md`);
+  return path.join(config.contextRoot, CATEGORY_TO_DIR[category], `${slugify(title)}.md`);
 }
 
 async function uniquePath(basePath: string): Promise<string> {
@@ -130,21 +148,17 @@ export async function getProjectProfile(project: string): Promise<{ project: str
 
 export async function listContextSources(project: string): Promise<{ project: string; sources: ContextSource[] }> {
   const config = getProject(project);
-  const roots = await readableRoots(config);
   const sources: ContextSource[] = [];
+  const files = await listMarkdownFiles(config.contextRoot);
 
-  for (const { origin, root } of roots) {
-    const files = await listMarkdownFiles(root);
-    for (const file of files) {
-      const rel = relativeTo(root, file);
-      const stat = await fs.stat(file);
-      sources.push({
-        path: `${origin}:${rel}`,
-        category: path.dirname(rel).split("/")[0] || "root",
-        size: stat.size,
-        origin
-      });
-    }
+  for (const file of files) {
+    const rel = relativeTo(config.contextRoot, file);
+    const stat = await fs.stat(file);
+    sources.push({
+      path: rel,
+      category: path.dirname(rel).split("/")[0] || "root",
+      size: stat.size
+    });
   }
 
   return { project, sources };
@@ -157,29 +171,97 @@ export async function searchContext(input: {
   limit?: number;
 }): Promise<{ project: string; query: string; matches: SearchMatch[] }> {
   const config = getProject(input.project);
-  const roots = await readableRoots(config);
   const limit = Math.min(Math.max(input.limit ?? 5, 1), 10);
   const category = input.category?.trim();
   const matches: SearchMatch[] = [];
 
-  for (const { origin, root } of roots) {
-    const files = await listMarkdownFiles(root);
-    for (const file of files) {
-      const rel = relativeTo(root, file);
-      if (category && !rel.toLowerCase().includes(category.toLowerCase())) {
-        continue;
-      }
-      const content = await fs.readFile(file, "utf8");
-      const source = `${origin}:${rel}`;
-      const match = scoreContent(source, content, input.query);
-      if (match) {
-        matches.push(match);
-      }
+  const files = await listMarkdownFiles(config.contextRoot);
+  for (const file of files) {
+    const rel = relativeTo(config.contextRoot, file);
+    if (category && !rel.toLowerCase().includes(category.toLowerCase())) {
+      continue;
+    }
+    const content = await fs.readFile(file, "utf8");
+    const match = scoreContent(rel, content, input.query);
+    if (match) {
+      matches.push(match);
     }
   }
 
   matches.sort((a, b) => b.score - a.score || a.source.localeCompare(b.source));
   return { project: input.project, query: input.query, matches: matches.slice(0, limit) };
+}
+
+async function readOptional(filePath: string): Promise<string> {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function extractKeywordSection(content: string): string[] {
+  const lines = content.split(/\r?\n/);
+  const keywords: string[] = [];
+  let inSection = false;
+
+  for (const line of lines) {
+    if (/^#{1,3}\s+(Context Trigger Keywords|Trigger|触发条件|触发关键词)/i.test(line.trim())) {
+      inSection = true;
+      continue;
+    }
+    if (inSection && /^#{1,3}\s+/.test(line.trim())) {
+      inSection = false;
+    }
+    if (!inSection) {
+      continue;
+    }
+    const item = line.replace(/^[-*]\s*/, "").trim();
+    if (item) {
+      keywords.push(item);
+    }
+  }
+
+  return keywords;
+}
+
+function chooseCategory(request: string): ContextCategory {
+  const lower = request.toLowerCase();
+  if (/skill|技能/.test(lower)) return "skills";
+  if (/profile|概况|规则/.test(lower)) return "profile";
+  if (/lesson|经验|总结/.test(lower)) return "lessons";
+  return "incidents";
+}
+
+export async function routeContextNeed(input: RouteContextNeedInput): Promise<RouteContextNeedResult> {
+  const config = getProject(input.project);
+  const request = input.request.trim();
+  if (!request) {
+    throw new Error("REQUEST_REQUIRED");
+  }
+
+  const profile = await readOptional(path.join(config.contextRoot, config.profileFile));
+  const skillFiles = await listMarkdownFiles(path.join(config.contextRoot, "skills")).catch(() => []);
+  const skillContents = await Promise.all(skillFiles.map((file) => readOptional(file)));
+  const projectKeywords = [
+    ...extractKeywordSection(profile),
+    ...skillContents.flatMap(extractKeywordSection)
+  ];
+  const keywords = [...new Set([...GENERIC_CONTEXT_KEYWORDS, ...projectKeywords].map((item) => item.trim()).filter(Boolean))];
+  const lowerRequest = request.toLowerCase();
+  const matchedKeywords = keywords.filter((keyword) => lowerRequest.includes(keyword.toLowerCase()));
+  const needsContext = matchedKeywords.length > 0;
+
+  return {
+    project: input.project,
+    needsContext,
+    reason: needsContext
+      ? `Matched context trigger keyword(s): ${matchedKeywords.join(", ")}.`
+      : "No project or history-sensitive trigger keyword matched.",
+    query: needsContext ? request : undefined,
+    category: needsContext ? chooseCategory(request) : undefined,
+    matchedKeywords
+  };
 }
 
 export async function appendLesson(input: AppendLessonInput): Promise<AppendLessonResult> {
@@ -193,60 +275,16 @@ export async function appendLesson(input: AppendLessonInput): Promise<AppendLess
 
   assertSafeContent(`${title}\n${content}`);
 
-  const contextFile = path.join(config.contextRoot, CATEGORY_TO_CONTEXT_FILE[input.category]);
+  const contextFile = await uniquePath(contextCategoryPath(config, input.category, title));
+  if (input.dedupe ?? true) {
+    const existing = await searchContext({ project: input.project, query: title, category: input.category, limit: 3 });
+    const duplicate = existing.matches.some((match) => match.snippet.includes(content.slice(0, Math.min(content.length, 120))));
+    if (duplicate) {
+      return { ok: true, writtenTo: existing.matches[0]?.source || contextFile, duplicate: true };
+    }
+  }
+
   await fs.mkdir(path.dirname(contextFile), { recursive: true });
-  await fs.appendFile(contextFile, formatLesson(title, content), "utf8");
-
-  let mirroredTo: string | undefined;
-  if (input.mirror) {
-    const mirrorFile = await uniquePath(mirrorCategoryPath(config, input.category, title));
-    await fs.mkdir(path.dirname(mirrorFile), { recursive: true });
-    await fs.writeFile(mirrorFile, `# ${title}\n\n${content}\n`, "utf8");
-    mirroredTo = mirrorFile;
-  }
-
-  return { ok: true, writtenTo: contextFile, mirroredTo };
-}
-
-export async function syncProjectMirror(input: {
-  project: string;
-  dryRun?: boolean;
-}): Promise<{ project: string; dryRun: boolean; planned: Array<{ from: string; to: string }>; written: string[] }> {
-  const config = getProject(input.project);
-  const dryRun = input.dryRun ?? true;
-  const planned = [
-    {
-      from: path.join(config.contextRoot, "project-profile.md"),
-      to: path.join(config.mirrorRoot, "profile", "project-profile.md")
-    },
-    {
-      from: path.join(config.contextRoot, "incident-log.md"),
-      to: path.join(config.mirrorRoot, "incidents", "incident-log.md")
-    },
-    {
-      from: path.join(config.contextRoot, "deployment-lessons.md"),
-      to: path.join(config.mirrorRoot, "lessons", "deployment-lessons.md")
-    },
-    {
-      from: path.join(config.contextRoot, "supabase-lessons.md"),
-      to: path.join(config.mirrorRoot, "lessons", "supabase-lessons.md")
-    },
-    {
-      from: path.join(config.contextRoot, "hermes-lessons.md"),
-      to: path.join(config.mirrorRoot, "lessons", "hermes-lessons.md")
-    }
-  ];
-
-  const written: string[] = [];
-  if (!dryRun) {
-    for (const item of planned) {
-      const content = await fs.readFile(item.from, "utf8");
-      assertSafeContent(content);
-      await fs.mkdir(path.dirname(item.to), { recursive: true });
-      await fs.writeFile(item.to, content, "utf8");
-      written.push(item.to);
-    }
-  }
-
-  return { project: input.project, dryRun, planned, written };
+  await fs.writeFile(contextFile, `# ${title}\n\n${content}\n`, "utf8");
+  return { ok: true, writtenTo: contextFile };
 }

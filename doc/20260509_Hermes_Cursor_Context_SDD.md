@@ -1,8 +1,8 @@
 # SDD: Hermes + Cursor 上下文沉淀体系概要设计
 
-**版本**: v0.2  
+**版本**: v0.3  
 **日期**: 2026-05-09  
-**状态**: 已确认，待开发
+**状态**: 平台化设计待确认
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-10 | v0.3 | 平台化调整：Hermes 作为独立服务，项目级上下文单源存放在项目 `<project>/hermes/`；废弃镜像同步；新增上下文路由与 find-skill 设计。 |
 | 2026-05-09 | v0.2 | 增加 `hermes-context` MCP 概要设计：工具清单、检索流、写回流、安全边界、审计与 Skill 协作关系。 |
 | 2026-05-09 | v0.1 | 定义全局能力 + 项目级沉淀的混合架构。 |
 
@@ -32,7 +33,7 @@ Cursor Rules
 - 短事实常驻。
 - 流程能力按需加载。
 - 长历史按需检索。
-- 项目级内容双写：Hermes 独立目录 + 项目 Git 目录。
+- 项目级内容单源存放在项目 Git 目录。
 
 ---
 
@@ -52,39 +53,27 @@ H:\agent\hermes\
     global-user-profile.md
     global-stable-facts.md
 
-  contexts\
-    news\
-      project-profile.md
-      incident-log.md
-      deployment-lessons.md
-      supabase-lessons.md
-      hermes-lessons.md
-
   skills\
     global\
       context-recall\
       incident-review\
       mcp-safety-review
 
-    news\
-      news-pipeline-debug
-      supabase-prod-staging-check
-      report-ui-regression-check
-
   mcp\
     hermes-context\
+      route_context_need
       search_context
       append_lesson
       get_project_profile
       list_context_sources
 ```
 
-### 2.2 `news` 项目级镜像文档区
+### 2.2 项目级上下文目录规范
 
-项目级沉淀需要同步到 `news` 项目目录，便于随 Git 备份。
+每个项目在自己的项目根目录保存上下文，便于随项目 Git 备份。
 
 ```text
-H:\AIcode\Trae\news\
+<project-root>\
   hermes\
     README.md
 
@@ -106,16 +95,15 @@ H:\AIcode\Trae\news\
       cursor-collaboration-lessons.md
 
     skills\
-      news-pipeline-debug.md
-      supabase-prod-staging-check.md
-      report-ui-regression-check.md
+      <project-skill>.md
 ```
 
 说明：
 
-- `H:\agent\hermes\contexts\news\` 是 Hermes 主沉淀区。
-- `H:\AIcode\Trae\news\hermes\` 是项目镜像区，可被 Git 备份。
-- 两侧内容可以不完全一致，但关键复盘、项目事实和项目专属 Skill 必须同步。
+- `H:\agent\hermes` 是平台层，不保存具体项目的长历史。
+- `<project-root>\hermes\` 是项目级上下文单源目录。
+- `news` 当前只是示例项目：`H:\AIcode\Trae\news\hermes\`。
+- 不再双写，不再依赖镜像同步，避免内容分叉。
 
 ---
 
@@ -160,14 +148,14 @@ Skill 负责：
 
 MCP 负责：
 
-- 检索 Hermes Context Docs。
+- 检索项目 `hermes/` Context Docs。
 - 返回相关片段。
 - 写回新经验。
 - 列出当前项目可用上下文源。
 
 ### 3.4 Hermes Context Docs
 
-职责：较长的项目历史、故障复盘、详细经验。
+职责：较长的项目历史、故障复盘、详细经验，存放在各项目自己的 `hermes/` 目录。
 
 加载策略：
 
@@ -229,8 +217,7 @@ Cursor / Hermes Agent
   -> Skill 判断任务类型
   -> MCP Tool Call
   -> hermes-context MCP
-  -> H:\agent\hermes\contexts\<project>
-  -> H:\AIcode\Trae\<project>\hermes
+  -> <project-root>\hermes
 ```
 
 设计原则：
@@ -239,17 +226,17 @@ Cursor / Hermes Agent
 - 按项目隔离。
 - 默认返回片段，不返回全文。
 - 写入必须审计。
-- 项目镜像同步不自动提交 Git。
+- 项目上下文写入不自动提交 Git。
 
 ### 6.1 项目配置
 
-第一版内置静态项目配置：
+第一版使用显式项目配置。`news` 是示例项目，后续新增项目只需增加配置。
 
 ```json
 {
   "news": {
-    "contextRoot": "H:\\agent\\hermes\\contexts\\news",
-    "mirrorRoot": "H:\\AIcode\\Trae\\news\\hermes",
+    "projectRoot": "H:\\AIcode\\Trae\\news",
+    "contextRoot": "H:\\AIcode\\Trae\\news\\hermes",
     "profileFile": "project-profile.md"
   }
 }
@@ -261,47 +248,55 @@ Cursor / Hermes Agent
 
 - `get_project_profile`：返回项目短摘要，适合任务早期读取。
 - `list_context_sources`：列出某项目可检索的上下文文档。
+- `route_context_need`：判断当前请求是否需要检索上下文，并返回建议 query/category。
 - `search_context`：按项目、关键词、类别检索相关上下文片段。
 - `append_lesson`：追加经验、故障复盘或短总结到指定项目上下文文档。
-- `sync_project_mirror`：将 Hermes 主沉淀目录中适合备份的内容同步到项目镜像目录。
+- `sync_project_mirror`：废弃，不作为正常工具。
 
 `search_context` 的检索范围包括：
 
-- Hermes 主沉淀区：`H:\agent\hermes\contexts\<project>`
-- 项目镜像区：`H:\AIcode\Trae\<project>\hermes`
+- 目标项目上下文目录：`<project-root>\hermes`
 
-返回结果需标记来源前缀：`context:` 或 `mirror:`。
+返回结果需标记项目和相对路径。
 
 ### 6.3 检索流
 
 ```text
 用户请求
   -> Skill 命中
+  -> 调用 route_context_need(project, user_request)
+  -> 如需要上下文，再调用 search_context(project, query, category)
+  -> 如不需要上下文，直接回答并说明未检索原因
+```
+
+### 6.4 检索流
+
+```text
+用户请求
+  -> Skill 或 route_context_need 判断需要检索
   -> 调用 search_context(project, query, category)
-  -> MCP 扫描项目 Context Docs
+  -> MCP 扫描项目 hermes/ Context Docs
   -> 返回 top N 片段
   -> Cursor 结合当前代码判断
 ```
 
-### 6.4 写回流
+### 6.5 写回流
 
 ```text
 问题解决
   -> Cursor 生成结构化复盘
   -> 调用 append_lesson
   -> MCP 扫描敏感信息
-  -> 写入主沉淀目录
+  -> 写入项目 hermes/ 目录
   -> 记录 audit log
-  -> 如需要，调用 sync_project_mirror
 ```
 
-### 6.5 安全边界
+### 6.6 安全边界
 
 允许：
 
-- 读取 Hermes 上下文文档。
-- 写入 Hermes 上下文文档。
-- 同步项目镜像文档。
+- 读取已注册项目的 `hermes/` 上下文文档。
+- 写入已注册项目的 `hermes/` 上下文文档。
 
 禁止：
 
@@ -312,7 +307,7 @@ Cursor / Hermes Agent
 - 自动 Git commit 或 push。
 - 写入明显密钥。
 
-### 6.6 审计
+### 6.7 审计
 
 审计日志建议位置：
 
@@ -322,9 +317,74 @@ H:\agent\hermes\logs\hermes-context-mcp.jsonl
 
 每条记录包含时间、工具名、project、输入摘要、写入目标、命中源、结果状态和错误摘要。
 
-### 6.7 与 Skill 的关系
+### 6.8 与 Skill 的关系
 
 Skill 和 MCP 共同组成按需加载能力：
 
 - Skill 负责判断何时需要上下文、读什么、怎么用。
+- `route_context_need` 负责降低“应检索但未检索”的漏检概率。
 - MCP 负责读取、检索和写回上下文。
+
+---
+
+## 7. find-skill 能力
+
+新增全局 Skill：`find-skill`。
+
+触发场景：
+
+- 用户询问是否有某类 Skill。
+- 用户询问如何扩展 Hermes/Cursor 能力。
+- 用户要求查找、安装、评估技能。
+
+默认策略：
+
+- 先列出本地已有 Skills。
+- 再评估是否需要外部 Skill。
+- 不自动安装未知来源 Skill；必须先给风险说明并等待确认。
+
+---
+
+## 8. 新项目快速接入机制
+
+为了避免平台设计绑定 `news` 项目，每个新项目必须提供自己的“项目接入契约”。Hermes 平台只读取契约，不预设具体业务关键词。
+
+### 8.1 项目接入契约
+
+每个项目至少提供：
+
+```text
+<project-root>\hermes\
+  profile\
+    project-profile.md
+    project-rules-summary.md
+  skills\
+    <project>-debug.md
+```
+
+`project-profile.md` 必须包含：
+
+- 项目名称。
+- 项目根目录。
+- 技术栈。
+- 核心模块。
+- 常见风险。
+- 上下文检索触发关键词。
+
+`<project>-debug.md` 必须包含：
+
+- 触发条件。
+- 排查流程。
+- 需要读取的上下文类别。
+- 禁止事项。
+- 写回规则。
+
+### 8.2 通用路由策略
+
+`route_context_need` 不应写死 `news` 的 Mode 1/2/3 规则，而应合并：
+
+- 平台通用关键词：之前、又出现、回滚后、历史、复盘、曾经修过、部署、数据库、鉴权、监控。
+- 项目 profile 中声明的关键词。
+- 项目 Skill 中声明的触发条件。
+
+这样新项目只要补齐 profile 和项目 Skill，即可快速获得上下文路由能力。

@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { appendLesson, getProjectProfile, listContextSources, searchContext, syncProjectMirror } from "./context-store.js";
+import { appendLesson, getProjectProfile, listContextSources, routeContextNeed, searchContext } from "./context-store.js";
 import { writeAudit } from "./audit.js";
 import { summarizeInput } from "./safety.js";
 
@@ -111,14 +111,32 @@ server.tool(
 );
 
 server.tool(
+  "route_context_need",
+  "Decide whether a user request should search project context, based on generic and project-defined triggers.",
+  {
+    project: z.string().min(1).default("news"),
+    request: z.string().min(1)
+  },
+  async (input) => {
+    const result = await audited(
+      "route_context_need",
+      input.project,
+      input,
+      () => routeContextNeed(input)
+    );
+    return textResponse(result);
+  }
+);
+
+server.tool(
   "append_lesson",
-  "Append a verified lesson or incident summary to Hermes context, optionally mirroring it into the project repository.",
+  "Append a verified lesson or incident summary directly into the registered project's hermes directory.",
   {
     project: z.string().min(1).default("news"),
     category: z.enum(["profile", "incidents", "lessons", "skills"]),
     title: z.string().min(1),
     content: z.string().min(1),
-    mirror: z.boolean().default(true)
+    dedupe: z.boolean().default(true)
   },
   async (input) => {
     const result = await audited(
@@ -127,27 +145,7 @@ server.tool(
       { ...input, content: `${input.content.slice(0, 200)}${input.content.length > 200 ? "..." : ""}` },
       () => appendLesson(input),
       undefined,
-      (output) => output.mirroredTo || output.writtenTo
-    );
-    return textResponse(result);
-  }
-);
-
-server.tool(
-  "sync_project_mirror",
-  "Synchronize selected Hermes project context files into the project mirror directory. Does not run git commands.",
-  {
-    project: z.string().min(1).default("news"),
-    dryRun: z.boolean().default(true)
-  },
-  async (input) => {
-    const result = await audited(
-      "sync_project_mirror",
-      input.project,
-      input,
-      () => syncProjectMirror(input),
-      (output) => output.planned.map((item) => item.from),
-      (output) => output.written.join("; ")
+      (output) => output.writtenTo
     );
     return textResponse(result);
   }

@@ -58,7 +58,7 @@ Invoke-RestMethod http://127.0.0.1:8787/api/health
 Invoke-RestMethod http://127.0.0.1:8787/api/tasks `
   -Method Post `
   -ContentType 'application/json' `
-  -Body '{"source":"telegram","chatId":"7152783592","user":"test","text":"测试消息"}'
+  -Body '{"source":"telegram","chatId":"<telegram_chat_id>","user":"test","text":"测试消息"}'
 ```
 
 查询任务：

@@ -1,8 +1,8 @@
 # 测试与回滚: Hermes + Cursor 上下文沉淀体系
 
-**版本**: v0.2  
+**版本**: v0.3  
 **日期**: 2026-05-09  
-**状态**: 已确认，待开发
+**状态**: 平台化设计待确认
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-10 | v0.3 | 平台化测试调整：项目上下文单源在 `<project>/hermes/`；废弃 `sync_project_mirror`；增加 `route_context_need`、find-skill、Cursor 侧与 Telegram 侧完整测试矩阵。 |
 | 2026-05-09 | v0.2 | 增加 `hermes-context` MCP 测试与回滚：工具发现、profile、sources、search、append、mirror、安全阻断、性能与禁用回滚。 |
 | 2026-05-09 | v0.1 | 定义第一阶段工具启用、Memory、Session Search、Skills、Browser、Cronjob、项目镜像和性能验证。 |
 
@@ -24,7 +25,7 @@
 - Cursor 不默认读取长历史。
 - Skill 可作为调度入口。
 - MCP 后续可按需检索和写回上下文。
-- 项目级文档可镜像到 `news/hermes/` 并随 Git 备份。
+- 项目级文档单源存放在 `<project>/hermes/` 并随项目 Git 备份。
 
 ---
 
@@ -248,9 +249,9 @@ hermes mcp test hermes-context
 
 - `get_project_profile`
 - `list_context_sources`
+- `route_context_need`
 - `search_context`
 - `append_lesson`
-- `sync_project_mirror`
 
 ### 12.2 `get_project_profile`
 
@@ -279,7 +280,23 @@ hermes mcp test hermes-context
 - 返回 `project-profile.md`、`supabase-lessons.md`、`hermes-lessons.md` 等文件。
 - 不返回项目外路径。
 
-### 12.4 `search_context`
+### 12.4 `route_context_need`
+
+输入：
+
+```json
+{
+  "project": "news",
+  "request": "模式2 R2失败为什么应该展示 Markdown？"
+}
+```
+
+期望：
+
+- `needsContext=true`。
+- 返回推荐 query 和 category。
+
+### 12.5 `search_context`
 
 输入：
 
@@ -297,7 +314,7 @@ hermes mcp test hermes-context
 - 不返回全文。
 - 无匹配时返回空数组。
 
-### 12.5 `append_lesson`
+### 12.6 `append_lesson`
 
 输入：
 
@@ -306,21 +323,18 @@ hermes mcp test hermes-context
   "project": "news",
   "category": "lessons",
   "title": "Test lesson",
-  "content": "## Summary\nThis is a test lesson.",
-  "mirror": true
+  "content": "## Summary\nThis is a test lesson."
 }
 ```
 
 期望：
 
-- 写入 Hermes 主沉淀区。
-- 同步到 `H:\AIcode\Trae\news\hermes\lessons`。
+- 写入 `H:\AIcode\Trae\news\hermes\lessons`。
 - 生成 audit 记录。
 
-### 12.6 `sync_project_mirror`
+### 12.7 `sync_project_mirror`
 
-`dryRun=true` 时只返回计划，不写文件。  
-`dryRun=false` 时写入镜像目录，但不执行 Git 操作。
+该工具已废弃。测试目标是确认工具列表中不再出现该工具，或调用时返回废弃说明。
 
 ---
 
@@ -375,7 +389,52 @@ GOOGLE_API_KEY=...
 
 ---
 
-## 15. 第二阶段回滚方案
+## 15. Cursor 侧完整测试矩阵
+
+1. MCP 注册状态：确认 `hermes-context` 与 `task-queue` enabled。
+2. 类型检查：`npm run typecheck` 通过。
+3. 项目 profile：`get_project_profile project=news` 返回 `news/hermes/profile/project-profile.md` 内容。
+4. 上下文源：`list_context_sources project=news` 只返回项目 `hermes/` 文件。
+5. 路由判断：`route_context_need` 对 Mode/Supabase/Vercel/Hermes/历史关键词返回 `needsContext=true`。
+6. 简单问候路由：`route_context_need request=你好` 返回 `needsContext=false`。
+7. 上下文检索：`search_context query="R2 failure fallback Markdown"` 命中 `incidents/mode2-mode3-report-pipeline.md`。
+8. 空结果检索：随机字符串返回空数组，不编造。
+9. 写回经验：`append_lesson category=lessons` 写入项目 `hermes/lessons`。
+10. 写回后检索：用标题关键词能检索到刚写入内容。
+11. 重复写入：重复 title/content 返回去重提示或生成明确结果。
+12. 敏感阻断：`GOOGLE_API_KEY=...` 被 `SENSITIVE_CONTENT_BLOCKED` 阻断。
+13. 越权项目：`project=../../` 返回 `PROJECT_NOT_ALLOWED`。
+14. 审计日志：记录工具名、project、状态，不记录密钥。
+15. Git 状态：项目 `hermes/` 只出现预期文档，不出现运行数据或密钥。
+
+---
+
+## 16. Telegram Hermes 侧完整测试矩阵
+
+1. 队列入站：调用 `queue_create_task`，返回 task id。
+2. 队列读取：调用 `queue_list_tasks limit=5`，能看到刚写入任务。
+3. 项目 profile：调用 `mcp_hermes_context_get_project_profile project=news`。
+4. 上下文源：调用 `mcp_hermes_context_list_context_sources project=news`。
+5. 路由判断：调用 `mcp_hermes_context_route_context_need`，验证历史类问题返回 `needsContext=true`。
+6. 简单问候：验证 `route_context_need` 返回 `needsContext=false`，不触发 search。
+7. 历史检索：调用 `search_context query="Mode 1 active LLM configuration"`。
+8. UI 回归检索：调用 `search_context query="report UI JSON Markdown fallback"`。
+9. 安全写回：调用 `append_lesson` 写入普通测试经验。
+10. 写回后检索：用标题关键词检索刚写入内容。
+11. 敏感阻断：`TELEGRAM_BOT_TOKEN=xxx` 被阻断。
+12. 非法项目：`project=other_project` 被拒绝。
+13. Skill 软触发测试：直接问“模式2 R2失败为什么展示 Markdown”，观察 Hermes 是否主动调用 route/search。
+14. find-skill 测试：询问“有没有用于 Supabase 排障的 skill”，验证能列出或推荐相关 Skill。
+
+测试顺序建议：
+
+- 先 Cursor 本地确定性测试。
+- 再 Telegram 端到端测试。
+- 读类测试可并行；写回类测试应串行，并使用唯一 title。
+
+---
+
+## 17. 第二阶段回滚方案
 
 如开发后出现错误或性能问题，按以下顺序回滚：
 
@@ -384,5 +443,6 @@ GOOGLE_API_KEY=...
 3. 保留已生成的文档，不删除历史沉淀。
 4. 如写入了测试文档，删除测试文件。
 5. 恢复到第一阶段状态：仅使用文档骨架、Skill 草案、`task-queue` MCP。
+6. 如已写入测试文档，从对应项目 `hermes/` 目录删除测试文件。
 
 不需要回滚第一阶段工具，除非确认它们造成性能或安全问题。
