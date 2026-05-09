@@ -1,8 +1,8 @@
 # PRD: Hermes + Cursor 上下文沉淀体系
 
-**版本**: v0.3  
-**日期**: 2026-05-09  
-**状态**: 平台化设计待确认  
+**版本**: v0.4  
+**日期**: 2026-05-10  
+**状态**: 过度召回抑制已实现  
 **归属**: Hermes 独立 Agent 基础设施，服务多个 Cursor 项目
 
 ---
@@ -11,6 +11,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-10 | v0.4 | 增加 `search_context` 过度召回抑制要求：过滤低价值泛词、要求有效关键词命中、返回命中词用于审计，避免无关历史污染判断。 |
 | 2026-05-10 | v0.3 | 平台化调整：项目级上下文单源存放在各项目 `<project>/hermes/`，`news` 仅作为示例项目；废弃 `sync_project_mirror`；增加 `route_context_need` 与 find-skill 能力规划。 |
 | 2026-05-09 | v0.2 | 增加第二阶段 `hermes-context` MCP 闭环：按项目检索上下文、写回复盘、同步项目镜像、敏感信息阻断与审计。 |
 | 2026-05-09 | v0.1 | 定义 Cursor Rules、Hermes Memory、Skills + MCP、Hermes Context Docs 的分层架构和第一阶段工具启用范围。 |
@@ -99,6 +100,7 @@ Cursor Rules
 - 支持追加经验、故障复盘或短总结。
 - 支持将项目级内容直接写入对应项目的 `hermes/` 目录。
 - 支持先通过 `route_context_need` 判断是否需要检索上下文。
+- 支持 `search_context` 过度召回抑制，避免仅因 `context/project/test/history` 等泛词命中而返回无关历史。
 - 支持基础敏感信息扫描和写入审计。
 
 ### 6.2 第二阶段非范围
@@ -115,6 +117,7 @@ Cursor Rules
 - `get_project_profile` 能按项目配置返回项目短摘要。
 - `list_context_sources` 能列出目标项目可用上下文文件。
 - `search_context` 能根据关键词返回相关片段，而非全文。
+- `search_context` 对无匹配、仅泛词、泛词+随机词应返回空结果，并在有效命中时返回命中词供审计。
 - `route_context_need` 能判断是否需要检索上下文，并给出建议 query/category。
 - `append_lesson` 能直接写入项目 `hermes/` 目录。
 - `sync_project_mirror` 被废弃，不作为正常能力。

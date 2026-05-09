@@ -1,8 +1,8 @@
 # TDD: Hermes + Cursor 上下文沉淀体系详细设计
 
-**版本**: v0.3  
-**日期**: 2026-05-09  
-**状态**: 平台化设计待确认
+**版本**: v0.4  
+**日期**: 2026-05-10  
+**状态**: 过度召回抑制已实现
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-10 | v0.4 | 增加 `search_context` 过度召回抑制实现：停用词集合、有效关键词、最低相关分、`matchedTerms`/`ignoredTerms` 审计字段。 |
 | 2026-05-10 | v0.3 | 平台化调整：项目上下文从 `H:\agent\hermes\contexts\<project>` 迁移为 `<project-root>\hermes` 单源；废弃 `sync_project_mirror`；新增 `route_context_need` 和 find-skill 详细设计。 |
 | 2026-05-09 | v0.2 | 增加 `hermes-context` MCP 详细设计：TypeScript 结构、工具入参出参、检索策略、安全扫描、项目隔离和注册方式。 |
 | 2026-05-09 | v0.1 | 定义上下文流转、数据分类、MCP 预设接口、项目镜像同步、写回策略和性能控制。 |
@@ -158,13 +159,23 @@ Project-specific facts belong in that project's hermes/ directory.
   "matches": [
     {
       "source": "incidents/mode1-analysis-ticker.md",
-      "title": "Mode 1 production llm_configs missing",
-      "summary": "生产环境缺少 active LLM config 导致 analysis-ticker 500。",
+      "score": 8,
+      "matchedTerms": ["mode", "llm", "configuration"],
+      "ignoredTerms": [],
       "snippet": "..."
     }
   ]
 }
 ```
+
+过度召回抑制：
+
+- `tokenize()` 将查询拆成去重 token。
+- `STOP_WORDS` 过滤低价值泛词，例如 `context`、`project`、`history`、`test`、`上下文`、`项目`、`测试`。
+- 过滤后没有有效关键词时，`scoreContent()` 返回 `null`。
+- 只有有效关键词在内容、路径或标题中命中，且分数达到 `MIN_RELEVANCE_SCORE`，才返回结果。
+- 当查询包含三个及以上有效关键词时，至少需要命中两个有效关键词，避免单个高频词造成过度召回。
+- 返回 `matchedTerms` 和 `ignoredTerms`，用于排查为何召回或为何未召回。
 
 ### 3.3 `append_lesson`
 

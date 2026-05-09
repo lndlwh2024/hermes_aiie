@@ -1,8 +1,8 @@
 # 测试与回滚: Hermes + Cursor 上下文沉淀体系
 
-**版本**: v0.3  
-**日期**: 2026-05-09  
-**状态**: 平台化设计待确认
+**版本**: v0.4  
+**日期**: 2026-05-10  
+**状态**: 过度召回抑制已实现
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-10 | v0.4 | 增加 `search_context` 过度召回测试：无匹配词、仅泛词、泛词+随机词必须返回空数组；真实关键词仍应命中。 |
 | 2026-05-10 | v0.3 | 平台化测试调整：项目上下文单源在 `<project>/hermes/`；废弃 `sync_project_mirror`；增加 `route_context_need`、find-skill、Cursor 侧与 Telegram 侧完整测试矩阵。 |
 | 2026-05-09 | v0.2 | 增加 `hermes-context` MCP 测试与回滚：工具发现、profile、sources、search、append、mirror、安全阻断、性能与禁用回滚。 |
 | 2026-05-09 | v0.1 | 定义第一阶段工具启用、Memory、Session Search、Skills、Browser、Cronjob、项目镜像和性能验证。 |
@@ -313,6 +314,19 @@ hermes mcp test hermes-context
 - 返回和 Mode 2/3 fallback 相关片段。
 - 不返回全文。
 - 无匹配时返回空数组。
+- 返回 `matchedTerms` 和 `ignoredTerms`，用于审计命中原因。
+- 仅命中 `context/project/history/test` 等泛词时返回空数组。
+
+过度召回回归用例：
+
+| 用例 | query | 期望 |
+| --- | --- | --- |
+| 无匹配随机词 | `zzzxxyyqqq998877` | `matches=[]` |
+| 仅英文泛词 | `context project history test` | `matches=[]` |
+| 泛词 + 随机词 | `zzzxxyy-no-such-context-998877` | `matches=[]` |
+| 仅中文泛词 | `上下文 项目 测试 历史` | `matches=[]` |
+| 真实报告链路 | `R2 failure fallback Markdown` | 命中报告链路相关文档 |
+| 单词弱命中 | `R2 failure fallback Markdown` | 不返回仅命中 `failure` 的弱相关文档 |
 
 ### 12.6 `append_lesson`
 
@@ -397,8 +411,8 @@ GOOGLE_API_KEY=...
 4. 上下文源：`list_context_sources project=news` 只返回项目 `hermes/` 文件。
 5. 路由判断：`route_context_need` 对 Mode/Supabase/Vercel/Hermes/历史关键词返回 `needsContext=true`。
 6. 简单问候路由：`route_context_need request=你好` 返回 `needsContext=false`。
-7. 上下文检索：`search_context query="R2 failure fallback Markdown"` 命中 `incidents/mode2-mode3-report-pipeline.md`。
-8. 空结果检索：随机字符串返回空数组，不编造。
+7. 上下文检索：`search_context query="R2 failure fallback Markdown"` 命中 `incidents/mode2-mode3-report-pipeline.md`，并返回 `matchedTerms`。
+8. 空结果检索：随机字符串、仅泛词、泛词+随机词均返回空数组，不编造。
 9. 写回经验：`append_lesson category=lessons` 写入项目 `hermes/lessons`。
 10. 写回后检索：用标题关键词能检索到刚写入内容。
 11. 重复写入：重复 title/content 返回去重提示或生成明确结果。
