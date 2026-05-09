@@ -1,5 +1,7 @@
 # Hermes Telegram Task Queue
 
+为 AI IDE 提供结构化上下文和 Skill 服务；同时包含 Telegram/Hermes 本地任务队列能力。
+
 独立本地服务，用于把 Telegram/Hermes 消息写入统一任务队列，并通过 Web 看板确认消息是否已收到。
 
 ## 当前状态
