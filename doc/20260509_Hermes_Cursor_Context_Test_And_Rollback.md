@@ -1,8 +1,8 @@
 # 测试与回滚: Hermes + Cursor 上下文沉淀体系
 
-**版本**: v0.4  
+**版本**: v0.5  
 **日期**: 2026-05-10  
-**状态**: 过度召回抑制已实现
+**状态**: 过度召回抑制与 Gateway 守护验证已实现
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-10 | v0.5 | 增加 Hermes Gateway 守护验证：真实子进程检查、wrapper 自动拉起、`HermesGatewayHealth` 健康任务和回滚步骤。 |
 | 2026-05-10 | v0.4 | 增加 `search_context` 过度召回测试：无匹配词、仅泛词、泛词+随机词必须返回空数组；真实关键词仍应命中。 |
 | 2026-05-10 | v0.3 | 平台化测试调整：项目上下文单源在 `<project>/hermes/`；废弃 `sync_project_mirror`；增加 `route_context_need`、find-skill、Cursor 侧与 Telegram 侧完整测试矩阵。 |
 | 2026-05-09 | v0.2 | 增加 `hermes-context` MCP 测试与回滚：工具发现、profile、sources、search、append、mirror、安全阻断、性能与禁用回滚。 |
@@ -451,6 +452,39 @@ GOOGLE_API_KEY=...
 ## 17. 第二阶段回滚方案
 
 如开发后出现错误或性能问题，按以下顺序回滚：
+
+### 17.1 Hermes Gateway 守护回滚
+
+如果 `HermesGatewayHealth` 或加固后的 wrapper 引入异常：
+
+1. 停止健康任务：
+
+```powershell
+Disable-ScheduledTask -TaskName HermesGatewayHealth
+```
+
+2. 停止 Gateway 任务：
+
+```powershell
+Stop-ScheduledTask -TaskName HermesGateway
+```
+
+3. 将 `C:\Users\lndlw\AppData\Local\hermes\scripts\Start-HermesGateway.ps1` 回退到修改前版本，或临时改回仅执行 `hermes gateway run` 的最小循环。
+4. 重新启动 Gateway：
+
+```powershell
+Start-ScheduledTask -TaskName HermesGateway
+```
+
+守护验证标准：
+
+- `HermesGateway` 任务为 `Running`。
+- 进程树中存在真实 `hermes gateway run` 子进程。
+- `agent.log` 出现 `Connected to Telegram (polling mode)`。
+- 人为停止 Gateway 子进程后，wrapper 能在约 10 秒后拉起新子进程。
+- `Check-HermesGatewayHealth.ps1` 正常状态返回 `0`，异常状态会记录 `gateway-health.log` 并请求重启任务。
+
+### 17.2 hermes-context MCP 回滚
 
 1. 在 Hermes 中禁用 `hermes-context` MCP。
 2. 停止 `Run-HermesContextMcp.cmd` 相关进程。

@@ -2,7 +2,7 @@
 
 **日期**：2026-05-08  
 **归属**：独立 Agent 基础设施，不属于 `news` 项目的 PRD/SDD/TDD 业务范围  
-**状态**：Hermes Gateway 常驻已配置；Telegram -> Hermes -> Cursor MCP -> Cursor SDK Local Agent 基础链路已验证
+**状态**：Hermes Gateway 常驻与健康守护已配置；Telegram -> Hermes -> Cursor MCP -> Cursor SDK Local Agent 基础链路已验证
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-10 | v0.4 | 加固 Hermes Gateway 常驻：记录真实子进程 pid/退出码/运行时长，新增 `HermesGatewayHealth` 每分钟健康检查任务，用于修复“计划任务 Running 但 Gateway 子进程不存在”的失效状态。 |
 | 2026-05-09 | v0.3 | 修复 Hermes -> Gemini 慢响应根因：自定义 `httpx` transport 绕过代理、Gemini OpenAI-compatible 认证方式错误、`SOUL.md` BOM 被误判阻断；补充耗时拆解、验证结果和回滚方案。 |
 | 2026-05-08 | v0.2 | 新增 `H:\agent\hermes` 独立任务队列系统：本地 Web 看板、JSONL 队列、HTTP 入队接口、`task-queue` Hermes MCP 工具与运行说明。 |
 | 2026-05-08 | v0.1 | 记录 Hermes Gateway 常驻、Telegram -> Hermes -> Cursor MCP -> Cursor SDK Local Agent 基础链路与安全边界。 |
@@ -59,6 +60,7 @@ Windows 任务计划程序：
 
 ```text
 HermesGateway
+HermesGatewayHealth
 ```
 
 常用开关：
@@ -75,6 +77,27 @@ Unregister-ScheduledTask -TaskName HermesGateway -Confirm:$false
 
 - Windows 下 `hermes gateway status` 可能误报，应结合任务计划状态、进程、`agent.log` 判断。
 - 启动脚本会清理 stale `gateway.pid`、`gateway_state.json` 和 Telegram lock，避免重复轮询冲突。
+- `HermesGatewayHealth` 每分钟检查真实 `hermes gateway run` 子进程；如果出现“计划任务 Running 但 Gateway 子进程不存在”，会清理 stale 状态并重启 `HermesGateway`。
+- `gateway-wrapper.log` 记录 Gateway 子进程 pid、退出码、运行时长和连续快速退出次数；`gateway-health.log` 记录健康检查与自愈动作。
+
+守护脚本：
+
+```text
+C:\Users\lndlw\AppData\Local\hermes\scripts\Start-HermesGateway.ps1
+C:\Users\lndlw\AppData\Local\hermes\scripts\Check-HermesGatewayHealth.ps1
+H:\agent\hermes\scripts\Start-HermesGateway.ps1
+H:\agent\hermes\scripts\Check-HermesGatewayHealth.ps1
+```
+
+说明：`C:\Users\...\AppData\Local\hermes\scripts\` 是当前实际运行位置；`H:\agent\hermes\scripts\` 保存同版模板，便于 Git 备份和复用。
+
+关键日志：
+
+```text
+C:\Users\lndlw\AppData\Local\hermes\logs\gateway-wrapper.log
+C:\Users\lndlw\AppData\Local\hermes\logs\gateway-health.log
+C:\Users\lndlw\AppData\Local\hermes\logs\agent.log
+```
 
 ### 3.2 Cursor Agent MCP Server
 
@@ -170,10 +193,13 @@ C:\Users\lndlw\AppData\Local\hermes\logs\cursor-agent-mcp
 - 未确认的 `write` 请求会被策略拦截。
 - 只读 Cursor SDK Local Agent 调用成功，可访问本地工作区并返回中文摘要。
 - Hermes Gateway 已通过任务计划程序常驻。
+- 人为停止 Gateway 子进程后，wrapper 能自动拉起新子进程并恢复 Telegram polling。
+- 健康检查脚本可识别真实 Gateway 子进程、计划任务状态和 stale 状态文件，正常时返回 `0`。
 
 Telegram 端已验证：
 
 - 可通过 Hermes 调用 `cursor_agent_prompt` 获取本地项目目录结构摘要。
+- 短消息 `ping 你一下` 入站到回复耗时约 `17.1s`；其中一部分来自每次消息触发 agent 启动、环境加载和 MCP 工具注册。
 
 ---
 
@@ -183,6 +209,7 @@ Telegram 端已验证：
 - Hermes 自身可能选择先用自己的 terminal/file 工具，而不是每次都调用 `cursor-agent` MCP；提示词需要明确要求“调用 cursor_agent_prompt”。
 - `hermes chat -q` 在某些非交互 Windows Shell 中可能因 `prompt_toolkit` 控制台缓冲区问题失败；不影响 Gateway 和 MCP 工具本身。
 - OpenRouter 免费模型可能慢或返回 provider error，这属于 Hermes 主模型链路问题，不代表 Cursor MCP 工具不可用。
+- 当前 Telegram 短消息仍可能有 10 秒以上耗时，主要原因是 Hermes 每次处理消息会加载 agent 环境并注册 MCP 工具；后续优化应先量化普通问候是否可跳过部分工具加载。
 
 ---
 

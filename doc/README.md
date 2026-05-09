@@ -123,7 +123,49 @@ Invoke-RestMethod http://127.0.0.1:8787/api/health
 
 ---
 
-## 7. 注册 MCP
+## 7. Hermes Gateway 常驻与健康守护
+
+Windows 常驻任务：
+
+```powershell
+Start-ScheduledTask -TaskName HermesGateway
+Stop-ScheduledTask -TaskName HermesGateway
+```
+
+健康守护任务：
+
+```powershell
+schtasks /Query /TN HermesGatewayHealth /FO LIST /V
+```
+
+守护脚本：
+
+```text
+C:\Users\lndlw\AppData\Local\hermes\scripts\Start-HermesGateway.ps1
+C:\Users\lndlw\AppData\Local\hermes\scripts\Check-HermesGatewayHealth.ps1
+H:\agent\hermes\scripts\Start-HermesGateway.ps1
+H:\agent\hermes\scripts\Check-HermesGatewayHealth.ps1
+```
+
+`AppData\Local\hermes\scripts` 是 Windows 计划任务当前执行位置；`H:\agent\hermes\scripts` 是可版本化模板。
+
+日志：
+
+```text
+C:\Users\lndlw\AppData\Local\hermes\logs\gateway-wrapper.log
+C:\Users\lndlw\AppData\Local\hermes\logs\gateway-health.log
+C:\Users\lndlw\AppData\Local\hermes\logs\agent.log
+```
+
+排障判断：
+
+- 如果 Telegram 无响应，不能只看 `HermesGateway` 是否 Running，还要看是否存在真实 `hermes gateway run` 子进程。
+- `gateway_state.json` 可能残留 `running`，应以真实进程和 `agent.log` 最新入站记录为准。
+- `HermesGatewayHealth` 每分钟检查一次，发现真实 Gateway 子进程缺失会重启 `HermesGateway`。
+
+---
+
+## 8. 注册 MCP
 
 任务队列 MCP：
 
@@ -153,9 +195,9 @@ hermes mcp test hermes-context
 
 ---
 
-## 8. 常用能力
+## 9. 常用能力
 
-### 8.1 功能总览
+### 9.1 功能总览
 
 | 功能 | 能力说明 | 建议使用方式 |
 | --- | --- | --- |
@@ -169,7 +211,7 @@ hermes mcp test hermes-context
 | Skills | 把可复用流程封装成按需加载能力。 | 用于复用排障流程；不要把长历史直接塞进 Skill。 |
 | find-skill | 查找或评估是否已有合适 Skill。 | 用户询问“有没有技能/能否扩展能力”时使用。 |
 
-### 8.2 任务队列
+### 9.2 任务队列
 
 - `queue_create_task`
 - `queue_list_tasks`
@@ -183,7 +225,7 @@ hermes mcp test hermes-context
 - 看板只监听 `127.0.0.1`，默认不暴露公网。
 - 队列数据属于运行数据，不建议提交到 Git。
 
-### 8.3 上下文服务
+### 9.3 上下文服务
 
 计划能力：
 
@@ -208,7 +250,7 @@ hermes mcp test hermes-context
 - `search_context` 返回片段，不返回全文，避免 token 膨胀。
 - `append_lesson` 只写入已验证结论，不写猜测。
 
-### 8.4 跨项目接入模板
+### 9.4 跨项目接入模板
 
 每个新项目需要准备自己的上下文目录和触发关键词，不复用 `news` 的业务关键词。
 
@@ -252,7 +294,7 @@ Skill 应定义：
 - 禁止事项。
 - 写回规则。
 
-### 8.5 平台层与项目层边界
+### 9.5 平台层与项目层边界
 
 平台层 `H:\agent\hermes` 保存：
 
@@ -273,9 +315,9 @@ Skill 应定义：
 
 ---
 
-## 9. 使用示例
+## 10. 使用示例
 
-### 9.1 检索历史
+### 10.1 检索历史
 
 ```text
 请调用 search_context：
@@ -286,7 +328,7 @@ limit=5
 
 预期：返回项目 `hermes/` 中相关片段。
 
-### 9.2 写回经验
+### 10.2 写回经验
 
 ```text
 请调用 append_lesson：
@@ -299,7 +341,7 @@ content=## Summary
 
 预期：写入目标项目 `hermes/lessons/`。
 
-### 9.3 判断是否需要检索
+### 10.3 判断是否需要检索
 
 ```text
 请调用 route_context_need：
@@ -311,7 +353,7 @@ request=模式2 R2失败为什么应该展示 Markdown？
 
 ---
 
-## 10. 预期效果
+## 11. 预期效果
 
 部署成功后，应具备：
 
@@ -324,7 +366,7 @@ request=模式2 R2失败为什么应该展示 Markdown？
 
 ---
 
-## 11. 当前不足
+## 12. 当前不足
 
 - `route_context_need` 属于规划能力，需在 v0.3 实施后生效。
 - 检索第一版为关键词检索，不是语义向量检索。
@@ -334,7 +376,7 @@ request=模式2 R2失败为什么应该展示 Markdown？
 
 ---
 
-## 12. 后续优化
+## 13. 后续优化
 
 - 增加项目配置文件 `projects.json`。
 - 增强中文分词、标题权重和去重。
@@ -345,7 +387,7 @@ request=模式2 R2失败为什么应该展示 Markdown？
 
 ---
 
-## 13. 安全原则
+## 14. 安全原则
 
 - 不存密钥。
 - 不写数据库。
