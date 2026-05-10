@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { appendAuditEntry, listAuditEntries, summarizeDailyAudit } from "./audit-trail-store.js";
 import { appendLesson, getProjectProfile, listContextSources, routeContextNeed, searchContext } from "./context-store.js";
 import { writeAudit } from "./audit.js";
 import { summarizeInput } from "./safety.js";
@@ -146,6 +147,74 @@ server.tool(
       () => appendLesson(input),
       undefined,
       (output) => output.writtenTo
+    );
+    return textResponse(result);
+  }
+);
+
+server.tool(
+  "append_audit_entry",
+  "Append a work-log entry to the local Hermes audit trail. This tool only writes under AppData/Local/hermes/audit-trail and never runs code.",
+  {
+    scope: z.enum(["global", "project"]).default("project"),
+    project: z.string().optional(),
+    actionType: z.enum(["analysis", "doc_update", "code_change", "test", "config_change", "verification", "rollback", "other"]),
+    target: z.string().min(1),
+    summary: z.string().min(1),
+    result: z.string().min(1),
+    risk: z.enum(["low", "medium", "high"]).default("low"),
+    evidence: z.string().optional(),
+    followUp: z.string().optional()
+  },
+  async (input) => {
+    const result = await audited(
+      "append_audit_entry",
+      input.project,
+      { ...input, result: `${input.result.slice(0, 200)}${input.result.length > 200 ? "..." : ""}` },
+      () => appendAuditEntry(input),
+      undefined,
+      (output) => output.writtenTo.markdown
+    );
+    return textResponse(result);
+  }
+);
+
+server.tool(
+  "list_audit_entries",
+  "List local Hermes audit-trail entries for one date. Reads only from AppData/Local/hermes/audit-trail.",
+  {
+    scope: z.enum(["global", "project"]).default("project"),
+    project: z.string().optional(),
+    date: z.string().optional(),
+    limit: z.number().int().positive().max(100).default(20)
+  },
+  async (input) => {
+    const result = await audited(
+      "list_audit_entries",
+      input.project,
+      input,
+      () => listAuditEntries(input),
+      (output) => [output.source]
+    );
+    return textResponse(result);
+  }
+);
+
+server.tool(
+  "summarize_daily_audit",
+  "Summarize local Hermes audit-trail entries for one date without reading arbitrary files.",
+  {
+    scope: z.enum(["global", "project"]).default("project"),
+    project: z.string().optional(),
+    date: z.string().optional()
+  },
+  async (input) => {
+    const result = await audited(
+      "summarize_daily_audit",
+      input.project,
+      input,
+      () => summarizeDailyAudit(input),
+      (output) => [output.source]
     );
     return textResponse(result);
   }

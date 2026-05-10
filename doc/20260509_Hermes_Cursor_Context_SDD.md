@@ -1,8 +1,8 @@
 # SDD: Hermes + Cursor 上下文沉淀体系概要设计
 
-**版本**: v0.4  
+**版本**: v0.8  
 **日期**: 2026-05-10  
-**状态**: 过度召回抑制已实现
+**状态**: 工作日志落盘 + Telegram 通知双写方案已确认
 
 ---
 
@@ -10,6 +10,10 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-10 | v0.8 | 增加工作日志双写流程：`append_audit_entry` 成功后由 Skill 调用 `send_message` 发 Telegram 短摘要；通知是即时反馈，audit-trail 文件是权威记录。 |
+| 2026-05-10 | v0.7 | 增加受限工作日志 MCP 设计：`append_audit_entry`、`list_audit_entries`、`summarize_daily_audit` 仅访问 Hermes runtime 的 `audit-trail` 目录，不开放 Python/terminal/file/code_execution。 |
+| 2026-05-10 | v0.6 | 增加原始 Hermes Agent 与 `hermes_aiie` 的部署边界；设计 `HermesGatewayHealth` 通过 VBS + `wscript.exe` 隐藏执行，消除健康检查弹窗。 |
+| 2026-05-10 | v0.5 | 明确三层 Skill 目录边界：Hermes runtime、Hermes 平台级源码、项目专属 Skill；确认 `H:\agent\hermes\skills\news` 为遗留目录并应迁出/清理。 |
 | 2026-05-10 | v0.4 | 增加 `search_context` 检索精准度设计：停用词过滤、最低相关分、有效命中词审计，降低泛词导致的过度召回。 |
 | 2026-05-10 | v0.3 | 平台化调整：Hermes 作为独立服务，项目级上下文单源存放在项目 `<project>/hermes/`；废弃镜像同步；新增上下文路由与 find-skill 设计。 |
 | 2026-05-09 | v0.2 | 增加 `hermes-context` MCP 概要设计：工具清单、检索流、写回流、安全边界、审计与 Skill 协作关系。 |
@@ -59,12 +63,17 @@ H:\agent\hermes\
       context-recall\
       incident-review\
       mcp-safety-review
+    software-development\
+      audit-trail\
 
   mcp\
     hermes-context\
       route_context_need
       search_context
       append_lesson
+      append_audit_entry
+      list_audit_entries
+      summarize_daily_audit
       get_project_profile
       list_context_sources
 ```
@@ -105,6 +114,116 @@ H:\agent\hermes\
 - `<project-root>\hermes\` 是项目级上下文单源目录。
 - `news` 当前只是示例项目：`H:\AIcode\Trae\news\hermes\`。
 - 不再双写，不再依赖镜像同步，避免内容分叉。
+- 项目专属 Skill 只保存在 `<project-root>\hermes\skills\`，不得保存在 `H:\agent\hermes\skills\<project>`。
+
+### 2.3 Hermes runtime 与平台扩展边界
+
+原始 Hermes Agent 是运行时依赖，负责 Agent、Gateway、Telegram、MCP runtime、Skill runtime、日志和会话。`hermes_aiie` 是扩展服务仓库，负责上下文 MCP、任务队列 MCP、平台级自定义 Skill 源码、守护脚本模板和文档。
+
+部署顺序：
+
+```text
+安装原始 Hermes Agent
+  -> 初始化模型、Telegram、MCP 基础能力
+  -> clone hermes_aiie
+  -> 安装 hermes_aiie 依赖
+  -> 注册 hermes_aiie MCP 与守护脚本
+```
+
+### 2.4 Gateway 健康任务隐藏运行
+
+`HermesGatewayHealth` 仍保持每分钟检查一次，但计划任务动作不直接调用 PowerShell，而是调用：
+
+```text
+wscript.exe C:\Users\<user>\AppData\Local\hermes\scripts\Run-HermesGatewayHealthHidden.vbs
+```
+
+VBS 包装脚本再以隐藏窗口方式执行：
+
+```text
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File Check-HermesGatewayHealth.ps1
+```
+
+这样保留健康检查与自愈能力，同时避免交互桌面每分钟出现短暂 CMD/PowerShell 窗口。
+
+### 2.5 受限工作日志目录
+
+工作日志属于 Hermes runtime 运行数据，不进入平台源码仓库，也不进入项目仓库。默认目录：
+
+```text
+C:\Users\<user>\AppData\Local\hermes\audit-trail\
+  global\
+    YYYY-MM-DD.md
+    YYYY-MM-DD.jsonl
+  projects\
+    <project>\
+      YYYY-MM-DD.md
+      YYYY-MM-DD.jsonl
+```
+
+设计原则：
+
+- Hermes 不需要 Python 权限。
+- Telegram Hermes 不开启 `terminal`、`file`、`code_execution`。
+- MCP 工具内部固定路径写入，不接受任意绝对路径。
+- Markdown 用于人工审阅，JSONL 用于列表和日汇总。
+- 日志内容仍需经过敏感信息扫描。
+
+通知流程：
+
+```text
+工作完成
+  -> audit-trail Skill 整理记录字段
+  -> mcp_hermes_context_append_audit_entry 写入 runtime audit-trail
+  -> send_message 发送 Telegram 短摘要
+```
+
+约束：
+
+- 只有 `append_audit_entry` 成功后才发送 Telegram 通知。
+- Telegram 通知只包含短摘要、风险、目标和本地路径，不发送密钥或长日志全文。
+- 如果 `send_message` 失败，应返回“日志已落盘，Telegram 通知失败”的明确状态。
+- 不通过 cron 自动轮询日志文件。
+
+### 2.6 Skill 安装与源码边界
+
+Skill 目录分为运行层、平台源码层和项目层：
+
+```text
+C:\Users\<user>\AppData\Local\hermes\skills\
+```
+
+Hermes runtime 安装目录。Hermes 在本机运行时从该目录加载官方/内置 Skill 和已安装的自定义通用 Skill。该目录不是 `hermes_aiie` 的源码单源。
+
+```text
+H:\agent\hermes\skills\
+```
+
+Hermes AIIE 平台级自定义 Skill 源码目录。只允许保存跨项目通用能力，例如：
+
+- `global\find-skill`
+- `global\context-recall`
+- `software-development\audit-trail`
+
+```text
+<project-root>\hermes\skills\
+```
+
+项目专属 Skill/流程说明目录。用于保存项目特定排障流程、业务报告回归检查、项目经验触发规则等，默认通过 `hermes-context` MCP 检索，不自动同步到 Hermes runtime。
+
+安装/同步脚本边界：
+
+- 允许同步：`H:\agent\hermes\skills\global\`、`H:\agent\hermes\skills\software-development\` 等平台级白名单目录。
+- 禁止同步：`H:\agent\hermes\skills\news\`、任何 `<project-root>\hermes\skills\`。
+- 如果某项目 Skill 成熟到可跨项目复用，应先提升为平台级 Skill，再进入同步白名单。
+
+当前待清理项：
+
+```text
+H:\agent\hermes\skills\news\
+```
+
+该目录包含 `news` 项目专属 Skill，且引用已废弃的 `H:\agent\hermes\contexts\news\...` 路径。它属于平台化遗留目录，应在开发阶段删除；对应内容以 `H:\AIcode\Trae\news\hermes\skills\` 为项目单源。
 
 ---
 

@@ -1,8 +1,8 @@
 # TDD: Hermes + Cursor 上下文沉淀体系详细设计
 
-**版本**: v0.4  
+**版本**: v0.8  
 **日期**: 2026-05-10  
-**状态**: 过度召回抑制已实现
+**状态**: 工作日志落盘 + Telegram 通知双写流程已实现
 
 ---
 
@@ -10,6 +10,10 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-10 | v0.8 | 增加 `audit-trail` Skill 双写流程：MCP 写入成功后调用 `send_message`，向 Telegram 发送短摘要；不改 Hermes Agent 核心。 |
+| 2026-05-10 | v0.7 | 增加受限工作日志 MCP 技术实现：`audit-trail-store.ts` 固定写入 Hermes runtime `audit-trail` 目录，提供追加、列表和日汇总工具，不依赖 Python。 |
+| 2026-05-10 | v0.6 | 增加 `Run-HermesGatewayHealthHidden.vbs` 技术设计；`HermesGatewayHealth` 计划任务改为 `wscript.exe` 调用 VBS，再隐藏执行 PowerShell 健康检查。 |
+| 2026-05-10 | v0.5 | 增加 Skill 安装/同步技术边界：平台级通用 Skill 可同步到 Hermes runtime，项目专属 Skill 仅保留在 `<project>\hermes\skills`；确认 `skills\news` 为待清理遗留目录。 |
 | 2026-05-10 | v0.4 | 增加 `search_context` 过度召回抑制实现：停用词集合、有效关键词、最低相关分、`matchedTerms`/`ignoredTerms` 审计字段。 |
 | 2026-05-10 | v0.3 | 平台化调整：项目上下文从 `H:\agent\hermes\contexts\<project>` 迁移为 `<project-root>\hermes` 单源；废弃 `sync_project_mirror`；新增 `route_context_need` 和 find-skill 详细设计。 |
 | 2026-05-09 | v0.2 | 增加 `hermes-context` MCP 详细设计：TypeScript 结构、工具入参出参、检索策略、安全扫描、项目隔离和注册方式。 |
@@ -107,6 +111,34 @@ Project-specific facts belong in that project's hermes/ directory.
 ## 禁止事项
 ## 写回规则
 ```
+
+Skill 存放边界：
+
+- Hermes runtime Skill：`C:\Users\<user>\AppData\Local\hermes\skills`。
+- Hermes AIIE 平台级 Skill 源码：`H:\agent\hermes\skills`，只保存跨项目通用能力。
+- 项目专属 Skill：`<project-root>\hermes\skills`，随项目 Git 管理，默认由 `hermes-context` 检索，不安装为全局 runtime Skill。
+
+安装/同步脚本设计约束：
+
+```text
+sync allowed:
+  H:\agent\hermes\skills\global\
+  H:\agent\hermes\skills\software-development\
+
+sync denied:
+  H:\agent\hermes\skills\news\
+  <project-root>\hermes\skills\
+```
+
+如需让项目 Skill 进入 Hermes runtime，必须先人工评审并提升为平台级通用 Skill，再从 `H:\agent\hermes\skills\<category>` 同步。
+
+已知遗留目录：
+
+```text
+H:\agent\hermes\skills\news\
+```
+
+该目录包含 `news` 专属 Skill，并引用已废弃的 `H:\agent\hermes\contexts\news\...`。后续开发清理时应删除该目录，不应同步到 runtime。
 
 ---
 
@@ -306,7 +338,45 @@ disabled:
 
 ---
 
-## 9. 第二阶段技术实现：`hermes-context` MCP
+## 9. Gateway 健康任务隐藏执行设计
+
+运行时脚本：
+
+```text
+C:\Users\<user>\AppData\Local\hermes\scripts\Run-HermesGatewayHealthHidden.vbs
+```
+
+仓库模板：
+
+```text
+H:\agent\hermes\scripts\Run-HermesGatewayHealthHidden.vbs
+```
+
+脚本职责：
+
+```vbscript
+Set shell = CreateObject("WScript.Shell")
+scriptPath = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\hermes\scripts\Check-HermesGatewayHealth.ps1"
+command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & scriptPath & """"
+shell.Run command, 0, False
+```
+
+计划任务动作：
+
+```text
+wscript.exe C:\Users\<user>\AppData\Local\hermes\scripts\Run-HermesGatewayHealthHidden.vbs
+```
+
+设计约束：
+
+- VBS 只做隐藏窗口包装，不改变健康检查逻辑。
+- `Check-HermesGatewayHealth.ps1` 继续负责检测真实 `hermes gateway run` 子进程、清理 stale state、重启 `HermesGateway`。
+- `shell.Run command, 0, False` 表示隐藏窗口且不阻塞计划任务。
+- 若 VBS 出现问题，可将计划任务动作回退为直接执行 PowerShell 健康检查。
+
+---
+
+## 10. 第二阶段技术实现：`hermes-context` MCP
 
 沿用现有 `H:\agent\hermes` Node.js/TypeScript 技术栈：
 
@@ -332,7 +402,77 @@ H:\agent\hermes\mcp\hermes-context\
 
 第一版复用 `H:\agent\hermes` 根项目依赖，避免重复安装。
 
-### 9.1 `get_project_profile`
+### 10.1 受限工作日志工具
+
+实现文件：
+
+```text
+H:\agent\hermes\mcp\hermes-context\src\audit-trail-store.ts
+```
+
+默认根目录：
+
+```text
+C:\Users\<user>\AppData\Local\hermes\audit-trail
+```
+
+可通过环境变量覆盖：
+
+```text
+HERMES_AUDIT_TRAIL_ROOT
+```
+
+但生产使用应保持在 Hermes runtime 目录下。
+
+工具：
+
+- `append_audit_entry`
+- `list_audit_entries`
+- `summarize_daily_audit`
+
+安全约束：
+
+- 不调用 Python。
+- 不调用 terminal。
+- 不暴露任意文件读写路径。
+- `scope` 只能是 `global` 或 `project`。
+- `project` 只能包含字母、数字、下划线和短横线。
+- `actionType` 和 `risk` 使用枚举。
+- 单字段最大 2000 字符。
+- 写入前调用 `assertSafeContent` 阻断密钥、JWT、私钥等敏感内容。
+- 每条记录同时写入 Markdown 和 JSONL，便于人工审阅和结构化查询。
+
+双写流程由 Skill 编排，不在 MCP 内部直接调用 Telegram：
+
+```text
+mcp_hermes_context_append_audit_entry
+  -> 返回 writtenTo.markdown / writtenTo.jsonl
+  -> audit-trail Skill 调用 send_message
+  -> Telegram 收到短摘要
+```
+
+这样保持 MCP 的职责单一：只负责受限落盘；消息发送复用 Hermes 已开启的 `messaging/send_message` 工具。
+
+通知模板：
+
+```text
+工作日志已记录
+
+项目：<project|global>
+类型：<actionType>
+目标：<target>
+结果：<short result>
+风险：<risk>
+路径：<writtenTo.markdown>
+```
+
+错误处理：
+
+- `append_audit_entry` 失败：不发送 Telegram 成功通知，直接报告失败原因。
+- `append_audit_entry` 成功但 `send_message` 失败：报告“日志已落盘，Telegram 通知失败”。
+- Telegram 通知不得包含密钥、token、JWT、私钥或长日志全文。
+
+### 10.2 `get_project_profile`
 
 输入：
 
@@ -352,7 +492,7 @@ H:\agent\hermes\mcp\hermes-context\
 
 限制：输出不超过 1200 字；项目不存在时返回明确错误。
 
-### 9.2 `list_context_sources`
+### 10.3 `list_context_sources`
 
 输入：
 
@@ -375,7 +515,7 @@ H:\agent\hermes\mcp\hermes-context\
 }
 ```
 
-### 9.3 `route_context_need`
+### 10.4 `route_context_need`
 
 输入：
 
@@ -404,7 +544,7 @@ H:\agent\hermes\mcp\hermes-context\
 - 命中“之前、又出现、回滚后、曾经修过、历史、复盘”等词时，建议检索。
 - 简单问候、无项目背景的常识问题，不建议检索。
 
-### 9.4 `search_context`
+### 10.5 `search_context`
 
 输入：
 
@@ -443,7 +583,7 @@ H:\agent\hermes\mcp\hermes-context\
 - 默认 `limit=5`，最大 `limit=10`。
 - 单条 snippet 默认不超过 1200 字。
 
-### 9.5 `append_lesson`
+### 10.6 `append_lesson`
 
 输入：
 
@@ -466,11 +606,11 @@ H:\agent\hermes\mcp\hermes-context\
 - 支持基础重复检测，重复内容返回明确提示。
 - 写入后记录 audit。
 
-### 9.6 `sync_project_mirror`
+### 10.7 `sync_project_mirror`
 
 废弃。平台化后项目上下文只写入项目自身 `hermes/` 目录，不再需要主沉淀区到项目镜像区的同步。
 
-### 9.7 安全扫描
+### 10.8 安全扫描
 
 第一版使用规则扫描并阻断以下内容：
 
@@ -486,7 +626,7 @@ H:\agent\hermes\mcp\hermes-context\
 
 命中时返回 `SENSITIVE_CONTENT_BLOCKED`，不写入目标文件，audit 不记录完整敏感内容。
 
-### 9.8 项目隔离
+### 10.9 项目隔离
 
 所有工具必须要求 `project` 参数。第一版只允许：
 
@@ -496,7 +636,7 @@ news
 
 未来扩展新项目时，需要显式加入项目配置，不允许任意路径读取。
 
-### 9.9 find-skill Skill
+### 10.10 find-skill Skill
 
 实现位置：
 
@@ -516,7 +656,7 @@ H:\agent\hermes\skills\global\find-skill\SKILL.md
 - 说明匹配度。
 - 外部 Skill 只做候选推荐，不自动安装。
 
-### 9.10 新项目接入实现
+### 10.11 新项目接入实现
 
 新增项目时，不修改平台路由硬编码业务关键词，而是通过项目文件提供配置。
 
@@ -568,7 +708,7 @@ H:\AIcode\Example
 - 合并平台通用历史关键词。
 - 输出 `needsContext`、`reason`、`query`、`category`。
 
-### 9.11 注册方式
+### 10.12 注册方式
 
 计划注册 Hermes MCP server：
 

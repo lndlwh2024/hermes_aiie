@@ -1,8 +1,8 @@
 # 测试与回滚: Hermes + Cursor 上下文沉淀体系
 
-**版本**: v0.5  
+**版本**: v0.8  
 **日期**: 2026-05-10  
-**状态**: 过度召回抑制与 Gateway 守护验证已实现
+**状态**: 过度召回抑制、Gateway 守护、隐藏健康任务、受限工作日志与 Telegram 通知验证已实现
 
 ---
 
@@ -10,6 +10,9 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-10 | v0.8 | 增加工作日志 Telegram 通知测试：`append_audit_entry` 成功后应调用 `send_message` 发短摘要；通知失败时需明确区分落盘成功和通知失败。 |
+| 2026-05-10 | v0.7 | 增加受限工作日志 MCP 测试：验证无需 Python/terminal/file/code_execution，可追加、读取、汇总 `AppData\Local\hermes\audit-trail` 下的日志，并阻断敏感内容。 |
+| 2026-05-10 | v0.6 | 增加 `Run-HermesGatewayHealthHidden.vbs` 验证与回滚：确认计划任务动作改为 `wscript.exe`，健康检查仍写入 `gateway-health.log`，且不再弹出可见窗口。 |
 | 2026-05-10 | v0.5 | 增加 Hermes Gateway 守护验证：真实子进程检查、wrapper 自动拉起、`HermesGatewayHealth` 健康任务和回滚步骤。 |
 | 2026-05-10 | v0.4 | 增加 `search_context` 过度召回测试：无匹配词、仅泛词、泛词+随机词必须返回空数组；真实关键词仍应命中。 |
 | 2026-05-10 | v0.3 | 平台化测试调整：项目上下文单源在 `<project>/hermes/`；废弃 `sync_project_mirror`；增加 `route_context_need`、find-skill、Cursor 侧与 Telegram 侧完整测试矩阵。 |
@@ -440,6 +443,11 @@ GOOGLE_API_KEY=...
 12. 非法项目：`project=other_project` 被拒绝。
 13. Skill 软触发测试：直接问“模式2 R2失败为什么展示 Markdown”，观察 Hermes 是否主动调用 route/search。
 14. find-skill 测试：询问“有没有用于 Supabase 排障的 skill”，验证能列出或推荐相关 Skill。
+15. 工作日志追加：调用 `append_audit_entry scope=project project=news actionType=verification`，验证写入 Hermes runtime audit 目录。
+16. 工作日志读取：调用 `list_audit_entries scope=project project=news date=<today>`，验证返回刚写入记录。
+17. 工作日志汇总：调用 `summarize_daily_audit scope=project project=news date=<today>`，验证 total 和 actionType 统计正确。
+18. 工作日志敏感阻断：日志内容包含 `GOOGLE_API_KEY=...` 时应返回 `SENSITIVE_CONTENT_BLOCKED`。
+19. 权限验证：不要请求或开启 Python、terminal、file、code_execution。
 
 测试顺序建议：
 
@@ -449,11 +457,151 @@ GOOGLE_API_KEY=...
 
 ---
 
-## 17. 第二阶段回滚方案
+## 17. Gateway 隐藏健康任务验证
+
+### 17.1 计划任务动作验证
+
+执行：
+
+```powershell
+schtasks /Query /TN HermesGatewayHealth /FO LIST /V
+```
+
+期望：
+
+- `Task To Run` 或等价字段显示 `wscript.exe C:\Users\<user>\AppData\Local\hermes\scripts\Run-HermesGatewayHealthHidden.vbs`。
+- 不再直接显示 `powershell.exe ... Check-HermesGatewayHealth.ps1`。
+
+### 17.2 VBS 包装脚本验证
+
+执行：
+
+```powershell
+cscript.exe //nologo C:\Users\<user>\AppData\Local\hermes\scripts\Run-HermesGatewayHealthHidden.vbs
+```
+
+期望：
+
+- 命令退出码为 `0`。
+- `gateway-health.log` 追加健康检查记录。
+- 不影响当前 `HermesGateway` 任务状态。
+
+### 17.3 桌面弹窗验证
+
+观察一个完整健康检查周期，默认 1 分钟。
+
+期望：
+
+- 不再出现短暂 CMD/PowerShell 窗口。
+- `gateway-health.log` 仍持续写入 `Gateway health check passed`。
+
+---
+
+## 18. 受限工作日志验证
+
+### 18.1 追加日志
+
+输入：
+
+```json
+{
+  "scope": "project",
+  "project": "news",
+  "actionType": "verification",
+  "target": "audit-trail MCP",
+  "summary": "验证 Hermes 工作日志 MCP 是否可写入。",
+  "result": "MCP 返回 ok=true。",
+  "risk": "low",
+  "evidence": "manual test",
+  "followUp": "none"
+}
+```
+
+期望：
+
+- 返回 `ok=true`。
+- `writtenTo.markdown` 位于 `C:\Users\<user>\AppData\Local\hermes\audit-trail\projects\news\YYYY-MM-DD.md`。
+- `writtenTo.jsonl` 位于同目录 `YYYY-MM-DD.jsonl`。
+- `append_audit_entry` 成功后，Hermes 应调用 `send_message` 向 Telegram 发送短摘要。
+- Telegram 通知应说明项目、类型、目标、结果、风险和本地日志路径。
+
+### 18.2 读取与汇总
+
+调用：
+
+- `list_audit_entries scope=project project=news date=<today>`
+- `summarize_daily_audit scope=project project=news date=<today>`
+
+期望：
+
+- 能读取刚写入记录。
+- `summarize_daily_audit.total >= 1`。
+- `byActionType.verification >= 1`。
+
+### 18.3 权限与安全
+
+期望：
+
+- 测试过程中不使用 Python。
+- 不开启 `terminal`、`file`、`code_execution`。
+- 敏感阻断测试必须在 MCP 参数中原样传入 `GOOGLE_API_KEY=abc123`、`TELEGRAM_BOT_TOKEN=...`、JWT 或私钥样本，不能改写成“包含敏感信息”等普通描述。
+- 传入敏感样本时被阻断，返回 `SENSITIVE_CONTENT_BLOCKED`。
+- 被阻断的记录不应写入 `audit-trail` Markdown 或 JSONL 文件。
+- 传入非法 `project=..\..` 时被拒绝。
+
+敏感阻断测试推荐输入：
+
+```json
+{
+  "scope": "project",
+  "project": "news",
+  "actionType": "verification",
+  "target": "sensitive content block test",
+  "summary": "测试敏感内容阻断。",
+  "result": "GOOGLE_API_KEY=abc123",
+  "risk": "low",
+  "evidence": "Telegram Hermes manual test",
+  "followUp": "none"
+}
+```
+
+错误测试方式：
+
+```json
+{
+  "summary": "测试敏感内容阻断。",
+  "result": "包含敏感信息。"
+}
+```
+
+该错误方式不会触发阻断规则，因为没有传入任何真实阻断样本。
+
+### 18.4 Telegram 通知验证
+
+测试指令：
+
+```text
+请直接调用 mcp_hermes_context_append_audit_entry 写入一条 project=news 的 verification 测试日志；写入成功后，调用 send_message 给当前 Telegram 发送一条“工作日志已记录”的短摘要。若 send_message 失败，请返回完整错误，并说明日志是否已落盘。
+```
+
+期望：
+
+- `hermes-context-mcp.jsonl` 出现 `append_audit_entry` success。
+- `audit-trail\projects\news\YYYY-MM-DD.md` 和 `.jsonl` 新增记录。
+- 当前 Telegram 收到一条短通知。
+- 通知不包含密钥、token、JWT、私钥或长日志全文。
+- 如通知失败，回复必须明确区分：
+  - 日志落盘是否成功。
+  - Telegram 通知是否成功。
+  - 原始错误文本是什么。
+
+---
+
+## 19. 第二阶段回滚方案
 
 如开发后出现错误或性能问题，按以下顺序回滚：
 
-### 17.1 Hermes Gateway 守护回滚
+### 19.1 Hermes Gateway 守护回滚
 
 如果 `HermesGatewayHealth` 或加固后的 wrapper 引入异常：
 
@@ -483,8 +631,18 @@ Start-ScheduledTask -TaskName HermesGateway
 - `agent.log` 出现 `Connected to Telegram (polling mode)`。
 - 人为停止 Gateway 子进程后，wrapper 能在约 10 秒后拉起新子进程。
 - `Check-HermesGatewayHealth.ps1` 正常状态返回 `0`，异常状态会记录 `gateway-health.log` 并请求重启任务。
+- 如 VBS 包装异常，可将 `HermesGatewayHealth` 计划任务动作临时回退为直接调用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File Check-HermesGatewayHealth.ps1`。
 
-### 17.2 hermes-context MCP 回滚
+### 19.2 工作日志 MCP 回滚
+
+如果受限工作日志工具异常：
+
+1. 停止或重启 `hermes-context` MCP。
+2. 临时要求 Hermes 不调用 `append_audit_entry`、`list_audit_entries`、`summarize_daily_audit`。
+3. 保留 `C:\Users\<user>\AppData\Local\hermes\audit-trail` 下已有日志，不自动删除。
+4. 回退 `mcp\hermes-context\src\audit-trail-store.ts` 与 `index.ts` 中新增工具注册。
+
+### 19.3 hermes-context MCP 回滚
 
 1. 在 Hermes 中禁用 `hermes-context` MCP。
 2. 停止 `Run-HermesContextMcp.cmd` 相关进程。
