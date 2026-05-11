@@ -10,6 +10,8 @@ If a same-purpose document already exists, update that document instead of creat
 
 Do not create a new PRD, SDD, TDD, test case document, or handoff document for every iteration.
 
+Every major document update should be followed by a full review gate. The main agent should generate a compressed `Stage Review Packet` that references the updated document instead of pasting full history to every role.
+
 ## Role To Document Mapping
 
 | Role | Primary Document |
@@ -21,6 +23,19 @@ Do not create a new PRD, SDD, TDD, test case document, or handoff document for e
 | `qa` | Test cases and test report |
 | `ad` | Research report, only when invoked |
 | main agent as PM | plan, handoff, current-context summary |
+
+## Review Packet To Document Mapping
+
+| Artifact | Reviewers | Output |
+| --- | --- | --- |
+| PRD | `pd`, `ui`, `as`, `dev`, `qa` | consolidated PRD review and required PRD edits |
+| UI/UX | `pd`, `ui`, `as`, `dev`, `qa` | consolidated UI review and required UI/UX edits |
+| SDD / architecture | `pd`, `ui`, `as`, `dev`, `qa` | consolidated architecture/security review and required SDD edits |
+| TDD / detailed design | `pd`, `ui`, `as`, `dev`, `qa` | consolidated implementation review and required TDD edits |
+| Test plan | `pd`, `ui`, `as`, `dev`, `qa` | consolidated test plan review and required test edits |
+| Test report | `pd`, `ui`, `as`, `dev`, `qa` | final acceptance review |
+
+Add `ad` only for research, macro, industry, report-quality, or evidence-chain review.
 
 ## When New Documents Are Allowed
 
