@@ -24,6 +24,39 @@ H:\agent\hermes\doc\Hermes_Telegram_Cursor_MCP_Integration.md
 - 不自动改代码、不部署、不执行数据库写入。
 - 首版仅做收消息、看板展示、状态标记和本地队列文件。
 
+## AI IDE 对接规范
+
+平台级 AI IDE 角色定义与主 agent 调度流程保存在：
+
+```text
+H:\agent\hermes\aiide\
+```
+
+核心文件：
+
+```text
+aiide\orchestration\main-agent-pm-workflow.md
+aiide\orchestration\delivery-gates.md
+aiide\orchestration\document-update-policy.md
+aiide\agents\pd.md
+aiide\agents\ui.md
+aiide\agents\as.md
+aiide\agents\dev.md
+aiide\agents\qa.md
+aiide\agents\ad.md
+aiide\agents\pm.md
+```
+
+默认规则：
+
+- 主 agent 承担 PM 调度中枢职能。
+- 用户无需 `@pm`。
+- 标准新需求流程为 `pd -> ui(如涉及UI) -> as -> dev -> qa -> 确认开发 -> 开发 -> qa测试报告`。
+- `pm` 角色文件仅作为参考模板或独立流程审计使用，不默认独立调用。
+- `ad` 仅在投研、宏观、行业、报告质量审计等场景按需调用。
+
+这些文件不是 Hermes runtime Skill，也不是 MCP 工具；它们是 Cursor、Trae 等 AI IDE 对接 Hermes AIIE 时可复制或引用的角色模板与流程规范。
+
 ## 启动
 
 ```powershell
