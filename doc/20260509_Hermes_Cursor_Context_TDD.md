@@ -1,8 +1,8 @@
 # TDD: Hermes + Cursor 上下文沉淀体系详细设计
 
-**版本**: v0.8  
-**日期**: 2026-05-10  
-**状态**: 工作日志落盘 + Telegram 通知双写流程已实现
+**版本**: v0.9  
+**日期**: 2026-05-12  
+**状态**: current-context + MCP 动作通知已实现
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-12 | v0.9 | 增加 `current-context-store.ts` 与 `notify.ts`：提供 current-context 写入/读取/归档/版本列表工具，MCP 内部直接发送 Telegram 动作通知，并支持 `HTTP_PROXY`/`HTTPS_PROXY` 代理环境。 |
 | 2026-05-10 | v0.8 | 增加 `audit-trail` Skill 双写流程：MCP 写入成功后调用 `send_message`，向 Telegram 发送短摘要；不改 Hermes Agent 核心。 |
 | 2026-05-10 | v0.7 | 增加受限工作日志 MCP 技术实现：`audit-trail-store.ts` 固定写入 Hermes runtime `audit-trail` 目录，提供追加、列表和日汇总工具，不依赖 Python。 |
 | 2026-05-10 | v0.6 | 增加 `Run-HermesGatewayHealthHidden.vbs` 技术设计；`HermesGatewayHealth` 计划任务改为 `wscript.exe` 调用 VBS，再隐藏执行 PowerShell 健康检查。 |
@@ -442,37 +443,104 @@ HERMES_AUDIT_TRAIL_ROOT
 - 写入前调用 `assertSafeContent` 阻断密钥、JWT、私钥等敏感内容。
 - 每条记录同时写入 Markdown 和 JSONL，便于人工审阅和结构化查询。
 
-双写流程由 Skill 编排，不在 MCP 内部直接调用 Telegram：
+动作通知由 MCP 内部编排，不再要求 Skill 额外调用 `send_message`：
 
 ```text
 mcp_hermes_context_append_audit_entry
   -> 返回 writtenTo.markdown / writtenTo.jsonl
-  -> audit-trail Skill 调用 send_message
+  -> notify.ts 调用 Telegram Bot API
   -> Telegram 收到短摘要
 ```
 
-这样保持 MCP 的职责单一：只负责受限落盘；消息发送复用 Hermes 已开启的 `messaging/send_message` 工具。
+这样可以避免再次经过 Hermes LLM，减少 token/API 成本；通知失败不回滚已完成落盘。
+
+网络代理：
+
+- `notify.ts` 通过 `undici` 的 `ProxyAgent` 支持 `HTTPS_PROXY` / `HTTP_PROXY`。
+- 代理变量可来自 MCP 进程环境，或 Hermes runtime `.env`。
+- 若代理环境存在但未接入，Telegram API 会出现 `fetch failed`，落盘成功但通知失败。
 
 通知模板：
 
 ```text
-工作日志已记录
-
 项目：<project|global>
-类型：<actionType>
-目标：<target>
-结果：<short result>
-风险：<risk>
+触发类型：audit-trail（工作日志）
+发起者：<cursor|hermes|other>
+Skill/MCP：mcp_hermes_context_append_audit_entry（工作日志写入）
+结果：success
 路径：<writtenTo.markdown>
+风险：<risk>
+时间戳：<iso timestamp>
 ```
 
 错误处理：
 
 - `append_audit_entry` 失败：不发送 Telegram 成功通知，直接报告失败原因。
-- `append_audit_entry` 成功但 `send_message` 失败：报告“日志已落盘，Telegram 通知失败”。
+- `append_audit_entry` 成功但通知失败：返回 `notification.ok=false` 和错误摘要。
 - Telegram 通知不得包含密钥、token、JWT、私钥或长日志全文。
 
-### 10.2 `get_project_profile`
+### 10.2 `current-context` 工具
+
+实现文件：
+
+```text
+H:\agent\hermes\mcp\hermes-context\src\current-context-store.ts
+H:\agent\hermes\mcp\hermes-context\src\notify.ts
+```
+
+目标路径：
+
+```text
+<project-root>\hermes\state\current-context.md
+<project-root>\hermes\state\current-context.json
+<project-root>\hermes\state\archive\*-current-context.md
+```
+
+工具：
+
+- `write_current_context`
+- `get_current_context`
+- `list_current_context_versions`
+- `archive_current_context`
+
+`write_current_context` 输入包含：
+
+```json
+{
+  "project": "news",
+  "initiator": "cursor",
+  "currentGoal": "...",
+  "currentProject": "...",
+  "confirmedFacts": [],
+  "decisions": [],
+  "completedWork": [],
+  "modifiedFiles": [],
+  "openRisks": [],
+  "nextActions": [],
+  "doNotRepeat": [],
+  "minimalStartupPrompt": "...",
+  "risk": "low"
+}
+```
+
+写入流程：
+
+```text
+write_current_context
+  -> 校验 project
+  -> assertSafeContent
+  -> 若 current-context.md 已存在则复制到 archive
+  -> 覆盖写入 current-context.md/json
+  -> notify.ts 发送 Telegram 动作通知
+```
+
+限制：
+
+- 不写完整聊天记录。
+- 单字段最大 6000 字符，数组最多 30 项。
+- Hermes MCP 不推断 Cursor 隐藏上下文，只维护 Cursor 提供的结构化摘要。
+
+### 10.3 `get_project_profile`
 
 输入：
 
@@ -492,7 +560,7 @@ mcp_hermes_context_append_audit_entry
 
 限制：输出不超过 1200 字；项目不存在时返回明确错误。
 
-### 10.3 `list_context_sources`
+### 10.4 `list_context_sources`
 
 输入：
 
@@ -515,7 +583,7 @@ mcp_hermes_context_append_audit_entry
 }
 ```
 
-### 10.4 `route_context_need`
+### 10.5 `route_context_need`
 
 输入：
 
@@ -544,7 +612,7 @@ mcp_hermes_context_append_audit_entry
 - 命中“之前、又出现、回滚后、曾经修过、历史、复盘”等词时，建议检索。
 - 简单问候、无项目背景的常识问题，不建议检索。
 
-### 10.5 `search_context`
+### 10.6 `search_context`
 
 输入：
 
@@ -583,7 +651,7 @@ mcp_hermes_context_append_audit_entry
 - 默认 `limit=5`，最大 `limit=10`。
 - 单条 snippet 默认不超过 1200 字。
 
-### 10.6 `append_lesson`
+### 10.7 `append_lesson`
 
 输入：
 
@@ -606,11 +674,11 @@ mcp_hermes_context_append_audit_entry
 - 支持基础重复检测，重复内容返回明确提示。
 - 写入后记录 audit。
 
-### 10.7 `sync_project_mirror`
+### 10.8 `sync_project_mirror`
 
 废弃。平台化后项目上下文只写入项目自身 `hermes/` 目录，不再需要主沉淀区到项目镜像区的同步。
 
-### 10.8 安全扫描
+### 10.9 安全扫描
 
 第一版使用规则扫描并阻断以下内容：
 
@@ -626,7 +694,7 @@ mcp_hermes_context_append_audit_entry
 
 命中时返回 `SENSITIVE_CONTENT_BLOCKED`，不写入目标文件，audit 不记录完整敏感内容。
 
-### 10.9 项目隔离
+### 10.10 项目隔离
 
 所有工具必须要求 `project` 参数。第一版只允许：
 
@@ -636,7 +704,7 @@ news
 
 未来扩展新项目时，需要显式加入项目配置，不允许任意路径读取。
 
-### 10.10 find-skill Skill
+### 10.11 find-skill Skill
 
 实现位置：
 
@@ -656,7 +724,7 @@ H:\agent\hermes\skills\global\find-skill\SKILL.md
 - 说明匹配度。
 - 外部 Skill 只做候选推荐，不自动安装。
 
-### 10.11 新项目接入实现
+### 10.12 新项目接入实现
 
 新增项目时，不修改平台路由硬编码业务关键词，而是通过项目文件提供配置。
 
@@ -708,7 +776,7 @@ H:\AIcode\Example
 - 合并平台通用历史关键词。
 - 输出 `needsContext`、`reason`、`query`、`category`。
 
-### 10.12 注册方式
+### 10.13 注册方式
 
 计划注册 Hermes MCP server：
 

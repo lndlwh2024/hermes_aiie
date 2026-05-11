@@ -1,7 +1,7 @@
 # Hermes 工作日志 MCP 使用与测试说明
 
 **适用对象**：Telegram 侧 Hermes Agent  
-**目标**：验证 Hermes 可以记录、读取、汇总工作日志，且不需要 Python、terminal、file、code_execution 权限。
+**目标**：验证 Hermes 可以记录、读取、汇总工作日志，维护 current-context，并通过 MCP 内部通知模块发送 Telegram 通知；全程不需要 Python、terminal、file、code_execution 权限。
 
 ---
 
@@ -12,7 +12,8 @@
 - 不申请 file 权限。
 - 不申请 code_execution 权限。
 - 只通过 `hermes-context` MCP 的受限工作日志工具落盘。
-- 工作日志落盘成功后，使用 `send_message` 给当前 Telegram 发送短摘要。
+- 工作日志或 current-context 落盘成功后，由 MCP 内部直接调用 Telegram Bot API 发送短摘要。
+- 不需要额外调用 `send_message`。
 - Telegram 通知不是权威记录，权威记录以本地 audit-trail 文件为准。
 - 工作日志只保存到 Hermes runtime 目录：
 
@@ -66,28 +67,20 @@ C:\Users\<user>\AppData\Local\hermes\audit-trail
 C:\Users\<user>\AppData\Local\hermes\audit-trail\projects\news\
 ```
 
-写入成功后，应继续调用 `send_message`，向当前 Telegram 发送短摘要。
-
-推荐消息：
+写入成功后，MCP 应自动向 Telegram 发送短摘要，格式类似：
 
 ```text
-工作日志已记录
-
 项目：news
-类型：verification
-目标：audit-trail MCP
-结果：已调用 MCP 追加工作日志
+触发类型：audit-trail（工作日志）
+发起者：hermes
+Skill/MCP：mcp_hermes_context_append_audit_entry（工作日志写入）
+结果：success
+路径：C:\Users\<user>\AppData\Local\hermes\audit-trail\projects\news\YYYY-MM-DD.md
 风险：low
-路径：<writtenTo.markdown>
+时间戳：...
 ```
 
-如果 `append_audit_entry` 成功但 `send_message` 失败，请明确回复：
-
-```text
-工作日志已落盘，但 Telegram 通知失败。
-错误：<原始错误文本>
-路径：<writtenTo.markdown>
-```
+如果通知失败，MCP 返回中的 `notification.ok` 应为 `false`，但已完成的落盘不回滚。
 
 ### 2.2 `mcp_hermes_context_list_audit_entries`
 
@@ -128,6 +121,68 @@ C:\Users\<user>\AppData\Local\hermes\audit-trail\projects\news\
 - 返回 `total >= 1`。
 - `byActionType.verification >= 1`。
 - 如果存在 `followUp != none`，应出现在 `unresolvedFollowUps`。
+
+### 2.4 `mcp_hermes_context_write_current_context`
+
+用途：写入当前上下文快照，覆盖最新版并归档旧版。
+
+参数：
+
+```json
+{
+  "project": "news",
+  "initiator": "cursor",
+  "currentGoal": "验证 current-context MCP 工具。",
+  "currentProject": "news 项目，路径 H:\\AIcode\\Trae\\news。",
+  "confirmedFacts": ["Hermes MCP 负责落盘、归档和通知。"],
+  "decisions": ["current-context 由 Cursor 总结，由 Hermes MCP 维护。"],
+  "completedWork": ["完成 current-context 测试写入。"],
+  "modifiedFiles": ["H:\\AIcode\\Trae\\news\\hermes\\state\\current-context.md"],
+  "openRisks": ["none"],
+  "nextActions": ["读取 current-context 并验证内容。"],
+  "doNotRepeat": ["不要让 Hermes 二次总结 Cursor 隐藏上下文。"],
+  "minimalStartupPrompt": "读取 current-context 后继续 news 项目上下文管理测试。",
+  "risk": "low"
+}
+```
+
+成功标准：
+
+- 返回 `ok=true`。
+- 写入 `H:\AIcode\Trae\news\hermes\state\current-context.md`。
+- 写入 `H:\AIcode\Trae\news\hermes\state\current-context.json`。
+- 若已有旧版，应归档到 `state\archive\`。
+- Telegram 收到动作通知，触发类型为 `current-context（当前上下文）`。
+
+### 2.5 `mcp_hermes_context_get_current_context`
+
+用途：读取当前上下文快照。
+
+参数：
+
+```json
+{ "project": "news" }
+```
+
+成功标准：
+
+- 返回 Markdown 内容。
+- 返回 source 路径。
+
+### 2.6 `mcp_hermes_context_list_current_context_versions`
+
+用途：列出归档版本。
+
+参数：
+
+```json
+{ "project": "news" }
+```
+
+成功标准：
+
+- 返回 current 路径。
+- 返回 archive 版本列表。
 
 ---
 
@@ -206,7 +261,7 @@ C:\Users\<user>\AppData\Local\hermes\audit-trail\global\
 - cookie。
 - 长日志全文。
 
-如果日志内容包含敏感信息并被 MCP 阻断，不要调用 `send_message` 发送“记录成功”通知，只能报告阻断结果。
+如果日志内容包含敏感信息并被 MCP 阻断，不应发送“记录成功”通知，只能报告阻断结果。
 
 ### 4.3 非法项目名阻断
 
@@ -248,19 +303,22 @@ C:\Users\<user>\AppData\Local\hermes\audit-trail\global\
 ## 6. 推荐测试顺序
 
 1. 调用 `append_audit_entry` 写入一条 `project=news` 的 `verification` 记录。
-2. 写入成功后调用 `send_message`，给当前 Telegram 发送“工作日志已记录”的短摘要。
+2. 确认 MCP 返回 `notification.ok=true`，且 Telegram 收到动作通知。
 3. 调用 `list_audit_entries` 确认记录存在。
 4. 调用 `summarize_daily_audit` 确认统计正确。
-5. 调用 `append_audit_entry scope=global` 写入一条全局记录。
-6. 调用敏感内容测试，确认被阻断，且不发送成功通知。
-7. 调用非法项目名测试，确认被阻断。
+5. 调用 `write_current_context` 写入 current-context。
+6. 调用 `get_current_context` 确认可读取。
+7. 调用 `list_current_context_versions` 确认版本列表可返回。
+8. 调用 `append_audit_entry scope=global` 写入一条全局记录。
+9. 调用敏感内容测试，确认被阻断，且不发送成功通知。
+10. 调用非法项目名测试，确认被阻断。
 
 测试完成后，请输出：
 
 - 成功调用了哪些工具。
 - 写入路径是否位于 `AppData\Local\hermes\audit-trail`。
-- Telegram 是否收到短通知。
-- 如通知失败，完整错误是什么，日志是否已落盘。
+- Telegram 是否收到 MCP 自动动作通知。
+- 如通知失败，`notification.error` 是什么，日志或 current-context 是否已落盘。
 - 是否出现要求 Python/terminal/file/code_execution 的情况。
 - 敏感内容是否使用了 `GOOGLE_API_KEY=abc123` 原样样本，并确认被阻断。
 - 非法项目名是否被阻断。

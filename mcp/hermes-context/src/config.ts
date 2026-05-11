@@ -12,6 +12,10 @@ const DEFAULT_RUNTIME_ROOT = process.env.LOCALAPPDATA
   ? path.join(process.env.LOCALAPPDATA, "hermes")
   : path.join(process.cwd(), ".hermes-runtime");
 
+export const HERMES_RUNTIME_ROOT =
+  process.env.HERMES_RUNTIME_ROOT ||
+  DEFAULT_RUNTIME_ROOT;
+
 export const AUDIT_LOG_PATH =
   process.env.HERMES_CONTEXT_AUDIT_LOG ||
   path.join(HERMES_ROOT, "logs", "hermes-context-mcp.jsonl");

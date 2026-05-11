@@ -34,7 +34,52 @@ Hermes 不直接替代 Cursor。推荐分工：
 
 因此，新机器部署时应先安装并初始化原始 Hermes Agent，再 clone `hermes_aiie`。
 
-### 2.1 原始 Hermes 默认路径
+### 2.1 安装前准备
+
+建议环境：
+
+- Windows 10/11。
+- PowerShell。
+- Git。
+- Node.js 20+。
+- Python 3.11+ 或原始 Hermes 安装包自带的 Python runtime。
+- 可访问模型供应商 API 的网络环境。
+- Telegram Bot Token，用于 Telegram Gateway。
+- 至少一个可用模型供应商的 API key，例如 Gemini、OpenRouter 等。
+
+检查基础命令：
+
+```powershell
+git --version
+node --version
+npm --version
+python --version
+```
+
+如果某个命令不存在，应先安装对应工具，再继续。
+
+### 2.2 安装原始 Hermes Agent
+
+原始 Hermes Agent 的安装方式以其官方仓库或发布包为准。安装完成后，应确保 `hermes` 命令可在 PowerShell 中直接执行。
+
+验证：
+
+```powershell
+hermes --help
+```
+
+预期：
+
+- 能看到 Hermes CLI 帮助。
+- 不提示 `hermes` 不是内部或外部命令。
+
+如果命令不存在：
+
+1. 确认原始 Hermes 是否已安装成功。
+2. 确认 Hermes CLI 所在目录是否加入 `PATH`。
+3. 关闭并重新打开 PowerShell 后再试。
+
+### 2.3 原始 Hermes 默认路径
 
 Windows 默认安装/运行目录通常为：
 
@@ -51,27 +96,86 @@ C:\Users\<user>\AppData\Local\hermes\logs     # Gateway/Agent 日志
 C:\Users\<user>\AppData\Local\hermes\sessions # 会话数据
 ```
 
-### 2.2 初始化与验证
+重要文件：
 
-安装原始 Hermes 后，建议先运行：
+```text
+C:\Users\<user>\AppData\Local\hermes\config.yaml # 主配置
+C:\Users\<user>\AppData\Local\hermes\.env        # 密钥，不提交 Git
+C:\Users\<user>\AppData\Local\hermes\SOUL.md     # Hermes 人设/规则
+```
+
+### 2.4 初始化模型配置
+
+首次安装后运行：
 
 ```powershell
-hermes --help
 hermes setup
+```
+
+根据交互提示填写：
+
+- 默认模型 provider。
+- 模型名称。
+- API key。
+- base URL，如使用 OpenAI-compatible endpoint。
+
+验证当前配置：
+
+```powershell
 hermes status
 hermes model
 ```
 
-如需 Telegram/Gateway：
+预期：
+
+- `hermes status` 能读取配置。
+- `hermes model` 能显示当前默认模型。
+- 简单对话能得到模型响应。
+
+常见问题：
+
+- Gemini/OpenRouter 等模型配置后响应慢，先确认代理、base URL 和模型名是否正确。
+- 如果提示 URL 无效，应使用模型供应商要求的完整 base URL。
+- `.env` 中的 key 不应写入 `H:\agent\hermes` 或项目仓库。
+
+### 2.5 配置 Telegram Gateway
+
+准备：
+
+1. 在 Telegram 通过 BotFather 创建 bot。
+2. 保存 bot token 到 Hermes `.env` 或 Hermes 配置。
+3. 配置允许访问的用户 ID，避免陌生人调用 Hermes。
+
+启动 Gateway：
 
 ```powershell
 hermes gateway
 ```
 
-如需 MCP：
+或使用：
+
+```powershell
+hermes gateway run
+```
+
+验证：
+
+- Telegram 给 bot 发消息，Hermes 能回复。
+- `agent.log` 出现 `Connected to Telegram (polling mode)`。
+- 如果没有响应，先检查代理、bot token、用户 allowlist。
+
+### 2.6 验证 Skills 与 MCP 基础能力
+
+查看 Hermes MCP：
 
 ```powershell
 hermes mcp list
+```
+
+查看 Skills：
+
+```powershell
+hermes skills list
 ```
 
 验证标准：
@@ -80,8 +184,36 @@ hermes mcp list
 - `hermes status` 能读取当前配置。
 - `hermes mcp list` 能正常执行。
 - Telegram/Gateway 能启动，或后续可由 `HermesGateway` 计划任务常驻。
+- `skills` 功能可列出已安装 Skill。
 
-### 2.3 与 `hermes_aiie` 的边界
+### 2.7 常见安装问题
+
+`hermes` 命令不存在：
+
+- 检查安装是否完成。
+- 检查 `PATH`。
+- 重新打开 PowerShell。
+
+Telegram 没有响应：
+
+- 检查 `agent.log`。
+- 检查 `TELEGRAM_BOT_TOKEN`。
+- 检查用户 ID allowlist。
+- 检查代理是否可访问 Telegram。
+
+Hermes 回复很慢：
+
+- 检查模型供应商延迟。
+- 检查代理。
+- 检查是否启用了过多工具或过长 system prompt。
+
+MCP 工具不可见：
+
+- 运行 `hermes mcp list`。
+- 运行 `hermes mcp test <server-name>`。
+- 重启 Gateway，让 Hermes 重新 discovery 工具。
+
+### 2.8 与 `hermes_aiie` 的边界
 
 原始 Hermes 负责运行时：
 
@@ -301,6 +433,8 @@ hermes mcp test hermes-context
 | Context Search | 按项目检索 `hermes/` 下的 profile、incidents、lessons、skills。 | 只在需要历史时调用，不要每次默认检索。 |
 | Lesson Writeback | 将已验证经验写回项目 `hermes/`。 | 仅在根因确认、修复验证后写回。 |
 | Audit Trail | 将 Hermes 工作日志写入 runtime 专用目录，并在成功后发送 Telegram 短通知。 | 用于记录已完成动作；不需要 Python、terminal、file、code_execution。 |
+| Current Context | 写入、读取、归档当前上下文快照。 | Cursor 在任务阶段结束或切新会话前调用，用于替代旧会话上下文。 |
+| Action Notification | MCP 落盘成功后直接调用 Telegram Bot API 发通知。 | 不经过 Hermes LLM，不增加 Gemini 成本。 |
 | Safety Scan | 阻断明显密钥、token、私钥等敏感内容写入。 | 写回前自动生效；命中后应改写为脱敏描述。 |
 | Skills | 把可复用流程封装成按需加载能力。 | 用于复用排障流程；不要把长历史直接塞进 Skill。 |
 | find-skill | 查找或评估是否已有合适 Skill。 | 用户询问“有没有技能/能否扩展能力”时使用。 |
@@ -331,6 +465,10 @@ hermes mcp test hermes-context
 - `append_audit_entry`
 - `list_audit_entries`
 - `summarize_daily_audit`
+- `write_current_context`
+- `get_current_context`
+- `list_current_context_versions`
+- `archive_current_context`
 
 用途：
 
@@ -340,6 +478,7 @@ hermes mcp test hermes-context
 - 检索历史复盘。
 - 写回新经验。
 - 写入、读取和汇总 Hermes 工作日志。
+- 写入、读取和归档当前上下文快照。
 
 建议：
 
@@ -348,6 +487,7 @@ hermes mcp test hermes-context
 - `search_context` 返回片段，不返回全文，避免 token 膨胀。
 - `append_lesson` 只写入已验证结论，不写猜测。
 - `append_audit_entry` 仅写入 `AppData\Local\hermes\audit-trail`，不接受任意路径。
+- `write_current_context` 用于覆盖当前状态快照，并自动归档旧版本。
 
 ### 10.4 工作日志
 
@@ -371,10 +511,25 @@ C:\Users\<user>\AppData\Local\hermes\audit-trail\
 
 ```text
 append_audit_entry 成功
-  -> send_message 给当前 Telegram 发送短摘要
+  -> hermes-context MCP 直接调用 Telegram Bot API 发送短摘要
 ```
 
 通知只作为即时反馈，权威记录仍以 `audit-trail` 目录下的 Markdown/JSONL 文件为准。
+
+通知字段：
+
+```text
+项目：news
+触发类型：audit-trail（工作日志）
+发起者：cursor
+Skill/MCP：mcp_hermes_context_append_audit_entry（工作日志写入）
+结果：success
+路径：C:\Users\<user>\AppData\Local\hermes\audit-trail\projects\news\YYYY-MM-DD.md
+风险：low
+时间戳：2026-05-12T00:00:00.000Z
+```
+
+其中字段标题只使用中文；`触发类型` 与 `Skill/MCP` 的值包含英文标识和中文说明。
 
 安全边界：
 
@@ -386,7 +541,52 @@ append_audit_entry 成功
 - 自动阻断密钥、token、JWT、私钥等敏感内容。
 - Telegram 通知不发送长日志全文，也不发送敏感信息。
 
-### 10.5 当前功能与权限矩阵
+### 10.5 当前上下文
+
+`current-context` 是 Cursor 新会话接续旧会话的最小上下文快照，目标是替代旧会话上下文，而不是在旧会话里继续叠加上下文。
+
+目标文件：
+
+```text
+H:\AIcode\Trae\news\hermes\state\current-context.md
+H:\AIcode\Trae\news\hermes\state\current-context.json
+H:\AIcode\Trae\news\hermes\state\archive\YYYY-MM-DDTHH-MM-SS-current-context.md
+```
+
+工具：
+
+- `write_current_context`：覆盖写入最新当前上下文，并归档上一版。
+- `get_current_context`：读取当前上下文。
+- `list_current_context_versions`：列出归档版本。
+- `archive_current_context`：手动归档当前上下文。
+
+写入触发：
+
+- Cursor 准备切新会话。
+- 一个阶段性任务完成。
+- 用户要求“整理当前上下文/交接/压缩上下文”。
+- 关键决策、已确认事实、风险、下一步动作发生变化。
+
+分工：
+
+- Cursor 掌握 Cursor 会话的一手上下文，因此由 Cursor 总结内容。
+- Hermes MCP 负责校验、脱敏、落盘、归档和通知。
+- Telegram Hermes 不二次总结 Cursor 内部上下文。
+
+写入成功后，MCP 直接发送 Telegram 通知：
+
+```text
+项目：news
+触发类型：current-context（当前上下文）
+发起者：cursor
+Skill/MCP：mcp_hermes_context_write_current_context（当前上下文写入）
+结果：success
+路径：H:\AIcode\Trae\news\hermes\state\current-context.md
+风险：low
+时间戳：...
+```
+
+### 10.6 当前功能与权限矩阵
 
 当前建议配置：
 
@@ -399,7 +599,7 @@ append_audit_entry 成功
 | `browser` | 开启 | 浏览公开网页。 | 中风险，默认不访问私有地址。 |
 | `cronjob` | 开启 | 计划任务能力。 | 中风险，仅用于低危提醒/汇总。 |
 | `task-queue MCP` | 开启 | 本地任务队列。 | 低风险，本地服务。 |
-| `hermes-context MCP` | 开启 | 上下文检索、写回、工作日志。 | 低到中风险，工具固定边界。 |
+| `hermes-context MCP` | 开启 | 上下文检索、写回、工作日志、当前上下文、动作通知。 | 低到中风险，工具固定边界。 |
 | `terminal` | 关闭 | 执行系统命令。 | 高风险，不为 Telegram Hermes 开启。 |
 | `file` | 关闭 | 任意文件读写/搜索。 | 高风险，不为工作日志开启。 |
 | `code_execution` | 关闭 | 运行代码/Python。 | 高风险，不为工作日志开启。 |
@@ -407,7 +607,7 @@ append_audit_entry 成功
 
 原则：如某个功能可通过受限 MCP 完成，不开启更大的通用权限。
 
-### 10.6 跨项目接入模板
+### 10.7 跨项目接入模板
 
 每个新项目需要准备自己的上下文目录和触发关键词，不复用 `news` 的业务关键词。
 
@@ -451,7 +651,7 @@ Skill 应定义：
 - 禁止事项。
 - 写回规则。
 
-### 10.7 平台层与项目层边界
+### 10.8 平台层与项目层边界
 
 平台层 `H:\agent\hermes` 保存：
 
@@ -470,7 +670,7 @@ Skill 应定义：
 
 不建议把具体项目长历史保存在平台层，否则多项目接入后会造成上下文污染。
 
-### 10.8 Skill 部署与运行边界
+### 10.9 Skill 部署与运行边界
 
 Hermes Skill 有三层目录，职责不同：
 
@@ -539,9 +739,290 @@ H:\AIcode\Trae\news\hermes\skills\
 
 ---
 
-## 11. 使用示例
+## 11. Hermes 当前工作职责清单
 
-### 11.1 检索历史
+本清单用于让 Telegram Hermes 明确自己当前能做什么、读写哪些文件、应调用哪些 MCP/工具，以及哪些行为禁止执行。
+
+### 11.1 工作日志记录
+
+职责：
+
+- 记录 Hermes 已完成且可验证的工作。
+- 将工作日志写入 Hermes runtime。
+- 写入成功后向当前 Telegram 发送短摘要。
+
+读写文件：
+
+```text
+C:\Users\<user>\AppData\Local\hermes\audit-trail\projects\<project>\YYYY-MM-DD.md
+C:\Users\<user>\AppData\Local\hermes\audit-trail\projects\<project>\YYYY-MM-DD.jsonl
+C:\Users\<user>\AppData\Local\hermes\audit-trail\global\YYYY-MM-DD.md
+C:\Users\<user>\AppData\Local\hermes\audit-trail\global\YYYY-MM-DD.jsonl
+```
+
+使用工具：
+
+- `mcp_hermes_context_append_audit_entry`
+- `mcp_hermes_context_list_audit_entries`
+- `mcp_hermes_context_summarize_daily_audit`
+
+限制：
+
+- 不使用 Python。
+- 不使用 terminal。
+- 不使用 file。
+- 不使用 code_execution。
+- 不把运行日志写入 `H:\agent\hermes` 或项目仓库。
+- Telegram 通知由 MCP 内部直接调用 Telegram Bot API 完成，不需要额外调用 Hermes LLM。
+
+### 11.2 项目上下文检索
+
+职责：
+
+- 当用户问到历史问题、故障复盘、曾经修复、回滚后问题时，检索项目上下文。
+- 返回相关片段，帮助 Cursor/Hermes 减少凭空判断。
+
+读取文件：
+
+```text
+H:\AIcode\Trae\news\hermes\profile\project-profile.md
+H:\AIcode\Trae\news\hermes\incidents\*.md
+H:\AIcode\Trae\news\hermes\lessons\*.md
+H:\AIcode\Trae\news\hermes\skills\*.md
+H:\AIcode\Trae\news\hermes\state\current-context.md
+```
+
+使用工具：
+
+- `mcp_hermes_context_route_context_need`
+- `mcp_hermes_context_search_context`
+- `mcp_hermes_context_get_project_profile`
+- `mcp_hermes_context_list_context_sources`
+
+限制：
+
+- 检索类任务默认不写文件。
+- 简单问候、普通常识问题不检索长历史。
+
+### 11.3 当前上下文维护
+
+职责：
+
+- 维护 Cursor 新会话接续旧会话的最小上下文快照。
+- 由掌握一手上下文的 Cursor 生成结构化内容。
+- 由 Hermes MCP 负责校验、脱敏、覆盖写入、归档旧版本并发送 Telegram 通知。
+
+写入文件：
+
+```text
+H:\AIcode\Trae\news\hermes\state\current-context.md
+H:\AIcode\Trae\news\hermes\state\current-context.json
+H:\AIcode\Trae\news\hermes\state\archive\*-current-context.md
+```
+
+使用工具：
+
+- `mcp_hermes_context_write_current_context`
+- `mcp_hermes_context_get_current_context`
+- `mcp_hermes_context_list_current_context_versions`
+- `mcp_hermes_context_archive_current_context`
+
+触发条件：
+
+- Cursor 准备切新会话。
+- 阶段性任务完成。
+- 用户要求整理/交接/压缩当前上下文。
+- 关键决策、已确认事实、风险、下一步动作发生变化。
+
+限制：
+
+- Hermes Telegram 不二次总结 Cursor 内部上下文。
+- 不写完整聊天记录，只写最小接续上下文。
+- 写入成功后由 MCP 自动通知 Telegram。
+
+### 11.4 项目经验写回
+
+职责：
+
+- 当问题已确认根因、修复方案、验证结果后，将经验沉淀到项目自己的 `hermes/` 目录。
+
+写入文件：
+
+```text
+H:\AIcode\Trae\news\hermes\lessons\*.md
+H:\AIcode\Trae\news\hermes\incidents\*.md
+H:\AIcode\Trae\news\hermes\profile\project-profile.md
+```
+
+使用工具：
+
+- `mcp_hermes_context_append_lesson`
+
+限制：
+
+- 只写已验证结论。
+- 不写猜测。
+- 不写密钥、token、JWT、私钥。
+- 不直接改项目代码。
+- 写入成功后由 MCP 自动通知 Telegram。
+
+### 11.5 Skill 使用与能力说明
+
+职责：
+
+- 当用户要求流程化能力时，按需加载对应 Skill。
+- 不默认读取所有长文档。
+
+读取文件：
+
+```text
+C:\Users\<user>\AppData\Local\hermes\skills\software-development\audit-trail\SKILL.md
+H:\agent\hermes\skills\software-development\audit-trail\SKILL.md
+```
+
+使用工具：
+
+- `skill_view`
+- `skills_list`
+- `mcp_hermes_context_search_context`
+
+限制：
+
+- Skill 是流程说明，不是任意执行权限。
+- Skill 不得要求开启 Python、terminal、file、code_execution。
+
+### 11.6 平台新开发 Skill 列表
+
+| Skill | 功能 | 服务对象 | 触发条件 | 主要工具/文件 |
+| --- | --- | --- | --- | --- |
+| `audit-trail` | 工作日志记录、落盘、通知。 | Telegram Hermes / Hermes 平台工作。 | 用户要求记录、总结、审计工作；Hermes 完成自测/排障。 | `append_audit_entry`、`list_audit_entries`、`summarize_daily_audit`。 |
+| `context-recall` | 按需检索历史上下文。 | Hermes/Cursor 作为上下文使用者。 | 涉及历史决策、事故、经验、用户偏好。 | `route_context_need`、`search_context`、`get_project_profile`。 |
+| `incident-review` | 事故/故障复盘流程。 | Hermes 自己参与的故障；Cursor 可参考流程。 | bug、宕机、部署失败、反复排障。 | `append_lesson` 写 incident/lesson。 |
+| `mcp-safety-review` | MCP 权限和安全审查。 | Hermes/Cursor 的 MCP 管理。 | 新增 MCP、新工具、新权限。 | 读 schema、分类权限、定义 allow/deny、审计和回滚。 |
+| `find-skill` | 查找或评估已有 Skill。 | Hermes 平台能力管理。 | 用户问“有没有技能/如何扩展能力”。 | 读取平台 Skill 和项目 Skill。 |
+
+平台 Skill 源码目录：
+
+```text
+H:\agent\hermes\skills\
+```
+
+runtime Skill 目录：
+
+```text
+C:\Users\<user>\AppData\Local\hermes\skills\
+```
+
+### 11.7 任务队列与消息确认
+
+职责：
+
+- 接收、登记、查询任务状态。
+- 用于确认 Telegram/Hermes 通道是否正常。
+
+读写位置：
+
+```text
+Hermes task-queue 本地运行数据
+```
+
+使用工具：
+
+- `mcp_task_queue_queue_create_task`
+- `mcp_task_queue_queue_list_tasks`
+- `mcp_task_queue_queue_update_task_status`
+
+限制：
+
+- task-queue 不是自动执行器。
+- 不用它绕过用户确认执行开发或部署。
+
+### 11.8 Telegram 通知
+
+职责：
+
+- 在 MCP 完成落盘动作后，把短摘要发送回 Telegram。
+
+使用工具：
+
+- MCP 内部 Telegram Bot API 通知模块。
+
+使用场景：
+
+- 工作日志已落盘。
+- 当前上下文已写入。
+- 项目经验/故障复盘已写入。
+- 用户要求发送结果。
+- 任务状态需要反馈。
+
+限制：
+
+- 不发送长日志全文。
+- 不发送密钥、token、JWT、私钥。
+- Telegram 通知不是权威记录，权威记录以本地 Markdown/JSON/JSONL 文件为准。
+- 通知不经过 Hermes LLM，不增加 Gemini API 成本。
+
+### 11.9 浏览器与公开信息查询
+
+职责：
+
+- 必要时查询公开网页信息。
+
+使用工具：
+
+- `browser`
+
+限制：
+
+- 不访问私有地址。
+- 不抓取敏感后台。
+- 不把网页信息直接当事实，应说明来源和不确定性。
+
+### 11.10 Cronjob 计划任务
+
+职责：
+
+- 用于低风险提醒或定时汇总。
+
+使用工具：
+
+- `cronjob`
+
+限制：
+
+- 不用 cronjob 代替工作日志写入。
+- 不创建高频任务。
+- 不执行代码、部署、数据库操作。
+
+### 11.11 明确禁止的职责
+
+Hermes 当前不得执行：
+
+- 不直接修改 `news` 项目代码。
+- 不直接部署前端、后端、数据库。
+- 不执行 SQL。
+- 不运行 shell 命令。
+- 不运行 Python。
+- 不读取任意本机文件。
+- 不写入任意路径。
+- 不保存密钥、token、JWT、私钥。
+- 不把项目专属上下文写入 `H:\agent\hermes`。
+
+### 11.12 当前项目路径
+
+```text
+项目名：news
+项目根目录：H:\AIcode\Trae\news
+项目上下文目录：H:\AIcode\Trae\news\hermes
+Hermes 平台目录：H:\agent\hermes
+Hermes runtime 目录：C:\Users\<user>\AppData\Local\hermes
+```
+
+---
+
+## 12. 使用示例
+
+### 12.1 检索历史
 
 ```text
 请调用 search_context：
@@ -552,7 +1033,7 @@ limit=5
 
 预期：返回项目 `hermes/` 中相关片段。
 
-### 11.2 写回经验
+### 12.2 写回经验
 
 ```text
 请调用 append_lesson：
@@ -565,7 +1046,7 @@ content=## Summary
 
 预期：写入目标项目 `hermes/lessons/`。
 
-### 11.3 判断是否需要检索
+### 12.3 判断是否需要检索
 
 ```text
 请调用 route_context_need：
@@ -577,7 +1058,7 @@ request=模式2 R2失败为什么应该展示 Markdown？
 
 ---
 
-## 12. 预期效果
+## 13. 预期效果
 
 部署成功后，应具备：
 
@@ -590,7 +1071,7 @@ request=模式2 R2失败为什么应该展示 Markdown？
 
 ---
 
-## 13. 当前不足
+## 14. 当前不足
 
 - `route_context_need` 属于规划能力，需在 v0.3 实施后生效。
 - 检索第一版为关键词检索，不是语义向量检索。
@@ -600,7 +1081,7 @@ request=模式2 R2失败为什么应该展示 Markdown？
 
 ---
 
-## 14. 后续优化
+## 15. 后续优化
 
 - 增加项目配置文件 `projects.json`。
 - 增强中文分词、标题权重和去重。
@@ -611,7 +1092,7 @@ request=模式2 R2失败为什么应该展示 Markdown？
 
 ---
 
-## 15. 安全原则
+## 16. 安全原则
 
 - 不存密钥。
 - 不写数据库。

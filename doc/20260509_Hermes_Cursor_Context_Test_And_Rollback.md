@@ -1,8 +1,8 @@
 # 测试与回滚: Hermes + Cursor 上下文沉淀体系
 
-**版本**: v0.8  
-**日期**: 2026-05-10  
-**状态**: 过度召回抑制、Gateway 守护、隐藏健康任务、受限工作日志与 Telegram 通知验证已实现
+**版本**: v0.9  
+**日期**: 2026-05-12  
+**状态**: current-context、MCP 动作通知与受限工作日志验证已实现
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-12 | v0.9 | 增加 current-context 写入/读取/归档/版本列表测试；工作日志通知改为验证 MCP 返回 `notification` 字段，不再要求额外调用 `send_message`。 |
 | 2026-05-10 | v0.8 | 增加工作日志 Telegram 通知测试：`append_audit_entry` 成功后应调用 `send_message` 发短摘要；通知失败时需明确区分落盘成功和通知失败。 |
 | 2026-05-10 | v0.7 | 增加受限工作日志 MCP 测试：验证无需 Python/terminal/file/code_execution，可追加、读取、汇总 `AppData\Local\hermes\audit-trail` 下的日志，并阻断敏感内容。 |
 | 2026-05-10 | v0.6 | 增加 `Run-HermesGatewayHealthHidden.vbs` 验证与回滚：确认计划任务动作改为 `wscript.exe`，健康检查仍写入 `gateway-health.log`，且不再弹出可见窗口。 |
@@ -522,8 +523,8 @@ cscript.exe //nologo C:\Users\<user>\AppData\Local\hermes\scripts\Run-HermesGate
 - 返回 `ok=true`。
 - `writtenTo.markdown` 位于 `C:\Users\<user>\AppData\Local\hermes\audit-trail\projects\news\YYYY-MM-DD.md`。
 - `writtenTo.jsonl` 位于同目录 `YYYY-MM-DD.jsonl`。
-- `append_audit_entry` 成功后，Hermes 应调用 `send_message` 向 Telegram 发送短摘要。
-- Telegram 通知应说明项目、类型、目标、结果、风险和本地日志路径。
+- `append_audit_entry` 成功后，MCP 返回 `notification.ok=true`。
+- Telegram 通知应说明项目、触发类型、发起者、Skill/MCP、结果、路径、风险和时间戳。
 
 ### 18.2 读取与汇总
 
@@ -581,7 +582,7 @@ cscript.exe //nologo C:\Users\<user>\AppData\Local\hermes\scripts\Run-HermesGate
 测试指令：
 
 ```text
-请直接调用 mcp_hermes_context_append_audit_entry 写入一条 project=news 的 verification 测试日志；写入成功后，调用 send_message 给当前 Telegram 发送一条“工作日志已记录”的短摘要。若 send_message 失败，请返回完整错误，并说明日志是否已落盘。
+请直接调用 mcp_hermes_context_append_audit_entry 写入一条 project=news 的 verification 测试日志；不要额外调用 send_message。请检查返回里的 notification 字段，并说明日志是否已落盘、Telegram 是否收到 MCP 自动通知。
 ```
 
 期望：
@@ -593,15 +594,69 @@ cscript.exe //nologo C:\Users\<user>\AppData\Local\hermes\scripts\Run-HermesGate
 - 如通知失败，回复必须明确区分：
   - 日志落盘是否成功。
   - Telegram 通知是否成功。
-  - 原始错误文本是什么。
+  - `notification.error` 是什么。
+
+## 19. current-context 验证
+
+### 19.1 写入当前上下文
+
+调用 `mcp_hermes_context_write_current_context`，输入：
+
+```json
+{
+  "project": "news",
+  "initiator": "cursor",
+  "currentGoal": "验证 current-context 工具。",
+  "currentProject": "news 项目。",
+  "confirmedFacts": ["Cursor 负责总结一手上下文，Hermes MCP 负责维护文件。"],
+  "decisions": ["current-context 用于替代旧会话上下文。"],
+  "completedWork": ["完成测试写入。"],
+  "modifiedFiles": ["H:\\AIcode\\Trae\\news\\hermes\\state\\current-context.md"],
+  "openRisks": ["none"],
+  "nextActions": ["读取并检查 current-context。"],
+  "doNotRepeat": ["不要把完整聊天记录写入 current-context。"],
+  "minimalStartupPrompt": "读取 current-context 后继续 Hermes-Cursor 上下文测试。",
+  "risk": "low"
+}
+```
+
+期望：
+
+- 返回 `ok=true`。
+- `writtenTo.markdown` 指向 `H:\AIcode\Trae\news\hermes\state\current-context.md`。
+- `writtenTo.json` 指向 `H:\AIcode\Trae\news\hermes\state\current-context.json`。
+- 返回 `notification.ok=true` 或在通知失败时返回 `notification.error`。
+- Telegram 收到触发类型 `current-context（当前上下文）` 的通知。
+
+### 19.2 读取与版本列表
+
+调用：
+
+- `mcp_hermes_context_get_current_context project=news`
+- `mcp_hermes_context_list_current_context_versions project=news`
+
+期望：
+
+- `get_current_context` 返回 Markdown 内容和 source 路径。
+- `list_current_context_versions` 返回 current 路径；若写入过多次，versions 非空。
+
+### 19.3 安全阻断
+
+调用 `write_current_context` 时把 `minimalStartupPrompt` 设置为 `GOOGLE_API_KEY=abc123`。
+
+期望：
+
+- 返回 `SENSITIVE_CONTENT_BLOCKED`。
+- 不覆盖当前 `current-context.md`。
+- 不发送成功通知。
 
 ---
 
-## 19. 第二阶段回滚方案
+## 20. 第二阶段回滚方案
 
 如开发后出现错误或性能问题，按以下顺序回滚：
 
-### 19.1 Hermes Gateway 守护回滚
+### 20.1 Hermes Gateway 守护回滚
 
 如果 `HermesGatewayHealth` 或加固后的 wrapper 引入异常：
 
@@ -633,7 +688,7 @@ Start-ScheduledTask -TaskName HermesGateway
 - `Check-HermesGatewayHealth.ps1` 正常状态返回 `0`，异常状态会记录 `gateway-health.log` 并请求重启任务。
 - 如 VBS 包装异常，可将 `HermesGatewayHealth` 计划任务动作临时回退为直接调用 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File Check-HermesGatewayHealth.ps1`。
 
-### 19.2 工作日志 MCP 回滚
+### 20.2 工作日志 MCP 回滚
 
 如果受限工作日志工具异常：
 
@@ -642,7 +697,7 @@ Start-ScheduledTask -TaskName HermesGateway
 3. 保留 `C:\Users\<user>\AppData\Local\hermes\audit-trail` 下已有日志，不自动删除。
 4. 回退 `mcp\hermes-context\src\audit-trail-store.ts` 与 `index.ts` 中新增工具注册。
 
-### 19.3 hermes-context MCP 回滚
+### 20.3 hermes-context MCP 回滚
 
 1. 在 Hermes 中禁用 `hermes-context` MCP。
 2. 停止 `Run-HermesContextMcp.cmd` 相关进程。

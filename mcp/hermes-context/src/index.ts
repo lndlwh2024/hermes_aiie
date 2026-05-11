@@ -3,7 +3,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { appendAuditEntry, listAuditEntries, summarizeDailyAudit } from "./audit-trail-store.js";
 import { appendLesson, getProjectProfile, listContextSources, routeContextNeed, searchContext } from "./context-store.js";
+import { archiveCurrentContext, getCurrentContext, listCurrentContextVersions, writeCurrentContext } from "./current-context-store.js";
 import { writeAudit } from "./audit.js";
+import { sendActionNotification } from "./notify.js";
 import { summarizeInput } from "./safety.js";
 
 const server = new McpServer({
@@ -21,6 +23,92 @@ function textResponse(payload: unknown) {
     ]
   };
 }
+
+const notificationToolLabels: Record<string, string> = {
+  append_lesson: "项目经验写回",
+  append_audit_entry: "工作日志写入",
+  write_current_context: "当前上下文写入",
+  archive_current_context: "当前上下文归档"
+};
+
+const notificationTriggerLabels: Record<string, string> = {
+  profile: "项目概况",
+  incidents: "故障复盘",
+  lessons: "项目经验",
+  skills: "项目技能",
+  "audit-trail": "工作日志",
+  "current-context": "当前上下文"
+};
+
+server.resource(
+  "hermes-context-capabilities",
+  "hermes-context://capabilities",
+  {
+    title: "Hermes Context Capabilities",
+    description: "Lists available hermes-context tools and their boundaries.",
+    mimeType: "application/json"
+  },
+  (uri) => ({
+    contents: [
+      {
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(
+          {
+            server: "hermes-context",
+            tools: [
+              "get_project_profile",
+              "list_context_sources",
+              "route_context_need",
+              "search_context",
+              "append_lesson",
+              "append_audit_entry",
+              "list_audit_entries",
+              "summarize_daily_audit",
+              "write_current_context",
+              "get_current_context",
+              "list_current_context_versions",
+              "archive_current_context"
+            ],
+            writes: {
+              auditTrail: "AppData/Local/hermes/audit-trail",
+              currentContext: "<project-root>/hermes/state",
+              lessons: "<project-root>/hermes/<category>"
+            },
+            safety: [
+              "No Python, terminal, arbitrary file, or code execution permission is required.",
+              "Write tools run sensitive-content checks before persistence.",
+              "Successful write tools send Telegram action notifications from MCP."
+            ]
+          },
+          null,
+          2
+        )
+      }
+    ]
+  })
+);
+
+server.prompt(
+  "current_context_handoff",
+  "Guide Hermes/Cursor to maintain and consume the compact current-context snapshot.",
+  () => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            "Use mcp_hermes_context_write_current_context when Cursor has first-hand context to persist.",
+            "Use mcp_hermes_context_get_current_context at the start of a new session to avoid rereading long history.",
+            "Do not ask for Python, terminal, file, or code_execution permission for this workflow.",
+            "Treat Telegram notification as immediate feedback, not the canonical record."
+          ].join("\n")
+        }
+      }
+    ]
+  })
+);
 
 async function audited<T>(
   tool: string,
@@ -137,6 +225,8 @@ server.tool(
     category: z.enum(["profile", "incidents", "lessons", "skills"]),
     title: z.string().min(1),
     content: z.string().min(1),
+    initiator: z.enum(["cursor", "hermes", "other"]).default("cursor"),
+    risk: z.enum(["low", "medium", "high"]).default("low"),
     dedupe: z.boolean().default(true)
   },
   async (input) => {
@@ -148,7 +238,18 @@ server.tool(
       undefined,
       (output) => output.writtenTo
     );
-    return textResponse(result);
+    const notification = await sendActionNotification({
+      project: input.project,
+      triggerType: input.category,
+      triggerLabel: notificationTriggerLabels[input.category],
+      initiator: input.initiator,
+      toolName: "mcp_hermes_context_append_lesson",
+      toolLabel: notificationToolLabels.append_lesson,
+      result: "success",
+      path: result.writtenTo,
+      risk: input.risk
+    });
+    return textResponse({ ...result, notification });
   }
 );
 
@@ -163,6 +264,7 @@ server.tool(
     summary: z.string().min(1),
     result: z.string().min(1),
     risk: z.enum(["low", "medium", "high"]).default("low"),
+    initiator: z.enum(["cursor", "hermes", "other"]).default("cursor"),
     evidence: z.string().optional(),
     followUp: z.string().optional()
   },
@@ -175,7 +277,18 @@ server.tool(
       undefined,
       (output) => output.writtenTo.markdown
     );
-    return textResponse(result);
+    const notification = await sendActionNotification({
+      project: result.entry.project,
+      triggerType: "audit-trail",
+      triggerLabel: notificationTriggerLabels["audit-trail"],
+      initiator: input.initiator,
+      toolName: "mcp_hermes_context_append_audit_entry",
+      toolLabel: notificationToolLabels.append_audit_entry,
+      result: "success",
+      path: result.writtenTo.markdown,
+      risk: result.entry.risk
+    });
+    return textResponse({ ...result, notification });
   }
 );
 
@@ -217,6 +330,118 @@ server.tool(
       (output) => [output.source]
     );
     return textResponse(result);
+  }
+);
+
+server.tool(
+  "write_current_context",
+  "Write the compact current context snapshot for a project, archive the previous snapshot, and notify Telegram.",
+  {
+    project: z.string().min(1).default("news"),
+    initiator: z.enum(["cursor", "hermes", "other"]).default("cursor"),
+    currentGoal: z.string().min(1),
+    currentProject: z.string().min(1),
+    confirmedFacts: z.array(z.string()).default([]),
+    decisions: z.array(z.string()).default([]),
+    completedWork: z.array(z.string()).default([]),
+    modifiedFiles: z.array(z.string()).default([]),
+    openRisks: z.array(z.string()).default([]),
+    nextActions: z.array(z.string()).default([]),
+    doNotRepeat: z.array(z.string()).default([]),
+    minimalStartupPrompt: z.string().min(1),
+    risk: z.enum(["low", "medium", "high"]).default("low")
+  },
+  async (input) => {
+    const result = await audited(
+      "write_current_context",
+      input.project,
+      { ...input, minimalStartupPrompt: `${input.minimalStartupPrompt.slice(0, 200)}${input.minimalStartupPrompt.length > 200 ? "..." : ""}` },
+      () => writeCurrentContext(input),
+      undefined,
+      (output) => output.writtenTo.markdown
+    );
+    const notification = await sendActionNotification({
+      project: input.project,
+      triggerType: "current-context",
+      triggerLabel: notificationTriggerLabels["current-context"],
+      initiator: input.initiator,
+      toolName: "mcp_hermes_context_write_current_context",
+      toolLabel: notificationToolLabels.write_current_context,
+      result: "success",
+      path: result.writtenTo.markdown,
+      risk: input.risk
+    });
+    return textResponse({ ...result, notification });
+  }
+);
+
+server.tool(
+  "get_current_context",
+  "Read the compact current context snapshot for a project.",
+  {
+    project: z.string().min(1).default("news")
+  },
+  async (input) => {
+    const result = await audited(
+      "get_current_context",
+      input.project,
+      input,
+      () => getCurrentContext(input.project),
+      (output) => [output.source.markdown, output.source.json]
+    );
+    return textResponse(result);
+  }
+);
+
+server.tool(
+  "list_current_context_versions",
+  "List archived current-context snapshots for a project.",
+  {
+    project: z.string().min(1).default("news")
+  },
+  async (input) => {
+    const result = await audited(
+      "list_current_context_versions",
+      input.project,
+      input,
+      () => listCurrentContextVersions(input.project),
+      (output) => [output.archiveDir]
+    );
+    return textResponse(result);
+  }
+);
+
+server.tool(
+  "archive_current_context",
+  "Archive the current context snapshot for a project without changing it.",
+  {
+    project: z.string().min(1).default("news"),
+    initiator: z.enum(["cursor", "hermes", "other"]).default("cursor"),
+    risk: z.enum(["low", "medium", "high"]).default("low")
+  },
+  async (input) => {
+    const result = await audited(
+      "archive_current_context",
+      input.project,
+      input,
+      () => archiveCurrentContext(input.project),
+      undefined,
+      (output) => output.archivedTo
+    );
+    const notification = result.archivedTo
+      ? await sendActionNotification({
+        project: input.project,
+        triggerType: "current-context",
+        triggerLabel: notificationTriggerLabels["current-context"],
+        initiator: input.initiator,
+        toolName: "mcp_hermes_context_archive_current_context",
+        toolLabel: notificationToolLabels.archive_current_context,
+        result: "success",
+        path: result.archivedTo,
+        risk: input.risk
+      })
+      : { ok: false, skipped: true, error: "no current context to archive" };
+    return textResponse({ ...result, notification });
   }
 );
 

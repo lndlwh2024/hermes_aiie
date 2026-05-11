@@ -8,6 +8,59 @@ const server = new McpServer({
   version: "0.1.0"
 });
 
+server.resource(
+  "hermes-task-queue-capabilities",
+  "hermes-task-queue://capabilities",
+  {
+    title: "Hermes Task Queue Capabilities",
+    description: "Lists available task-queue tools and boundaries.",
+    mimeType: "application/json"
+  },
+  (uri) => ({
+    contents: [
+      {
+        uri: uri.href,
+        mimeType: "application/json",
+        text: JSON.stringify(
+          {
+            server: "hermes-task-queue",
+            tools: ["queue_create_task", "queue_list_tasks", "queue_update_task_status"],
+            purpose: "Record Telegram/Hermes messages into a local task queue dashboard.",
+            boundaries: [
+              "Task queue is not an automatic code executor.",
+              "It does not replace user confirmation gates.",
+              "Queue data is local runtime state."
+            ]
+          },
+          null,
+          2
+        )
+      }
+    ]
+  })
+);
+
+server.prompt(
+  "task_queue_usage",
+  "Guide Hermes to use task-queue as a message registration and status-tracking tool.",
+  () => ({
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: [
+            "Use mcp_task_queue_queue_create_task only after Hermes has understood the user's request.",
+            "Use mcp_task_queue_queue_list_tasks to inspect queued messages.",
+            "Use mcp_task_queue_queue_update_task_status to mark queue items processing, done, or failed.",
+            "Do not treat task-queue as an automatic executor."
+          ].join("\n")
+        }
+      }
+    ]
+  })
+);
+
 server.tool(
   "queue_create_task",
   "Write a Telegram/Hermes message into the local task queue dashboard.",

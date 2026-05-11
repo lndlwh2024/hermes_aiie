@@ -45,25 +45,25 @@ Each recorded action should include:
    - `risk`: `low`, `medium`, or `high`.
 4. Use `mcp_hermes_context_list_audit_entries` to read entries for one date.
 5. Use `mcp_hermes_context_summarize_daily_audit` for a daily summary.
-6. After `append_audit_entry` succeeds, send a short Telegram notification with `send_message`.
-7. If `append_audit_entry` succeeds but `send_message` fails, report both states clearly: log persisted, Telegram notification failed.
-8. Do not use Python, terminal, code execution, arbitrary file tools, or cron to record work logs.
+6. After `append_audit_entry` succeeds, verify the returned `notification` field.
+7. If `append_audit_entry` succeeds but `notification.ok=false`, report both states clearly: log persisted, Telegram notification failed.
+8. Do not use Python, terminal, code execution, arbitrary file tools, `send_message`, or cron to record work logs.
 
 ## Telegram Notification Flow
 
-After a successful work-log write, send a concise message to the current Telegram chat. Use the current conversation target when available; otherwise use `target=telegram`.
+After a successful work-log write, `hermes-context` MCP sends a concise Telegram notification directly through the Telegram Bot API. Do not call `send_message` separately.
 
 Suggested notification:
 
 ```text
-工作日志已记录
-
 项目：<project|global>
-类型：<actionType>
-目标：<target>
-结果：<short result>
-风险：<risk>
+触发类型：audit-trail（工作日志）
+发起者：<cursor|hermes|other>
+Skill/MCP：mcp_hermes_context_append_audit_entry（工作日志写入）
+结果：success
 路径：<writtenTo.markdown>
+风险：<risk>
+时间戳：<iso timestamp>
 ```
 
 Keep the notification short. The full audit content remains in the local audit-trail file.

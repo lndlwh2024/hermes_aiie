@@ -1,8 +1,8 @@
 # SDD: Hermes + Cursor 上下文沉淀体系概要设计
 
-**版本**: v0.8  
-**日期**: 2026-05-10  
-**状态**: 工作日志落盘 + Telegram 通知双写方案已确认
+**版本**: v0.9  
+**日期**: 2026-05-12  
+**状态**: current-context + MCP 动作通知方案已实现
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-12 | v0.9 | 增加 `current-context` 目录与工具设计；动作通知从 Skill 双写改为 `hermes-context` MCP 内部直接调用 Telegram Bot API。 |
 | 2026-05-10 | v0.8 | 增加工作日志双写流程：`append_audit_entry` 成功后由 Skill 调用 `send_message` 发 Telegram 短摘要；通知是即时反馈，audit-trail 文件是权威记录。 |
 | 2026-05-10 | v0.7 | 增加受限工作日志 MCP 设计：`append_audit_entry`、`list_audit_entries`、`summarize_daily_audit` 仅访问 Hermes runtime 的 `audit-trail` 目录，不开放 Python/terminal/file/code_execution。 |
 | 2026-05-10 | v0.6 | 增加原始 Hermes Agent 与 `hermes_aiie` 的部署边界；设计 `HermesGatewayHealth` 通过 VBS + `wscript.exe` 隐藏执行，消除健康检查弹窗。 |
@@ -74,6 +75,10 @@ H:\agent\hermes\
       append_audit_entry
       list_audit_entries
       summarize_daily_audit
+      write_current_context
+      get_current_context
+      list_current_context_versions
+      archive_current_context
       get_project_profile
       list_context_sources
 ```
@@ -106,6 +111,11 @@ H:\agent\hermes\
 
     skills\
       <project-skill>.md
+
+    state\
+      current-context.md
+      current-context.json
+      archive\
 ```
 
 说明：
@@ -115,6 +125,7 @@ H:\agent\hermes\
 - `news` 当前只是示例项目：`H:\AIcode\Trae\news\hermes\`。
 - 不再双写，不再依赖镜像同步，避免内容分叉。
 - 项目专属 Skill 只保存在 `<project-root>\hermes\skills\`，不得保存在 `H:\agent\hermes\skills\<project>`。
+- `state\current-context.*` 保存当前上下文快照，用于新 Cursor 会话接续；旧版本归档到 `state\archive\`。
 
 ### 2.3 Hermes runtime 与平台扩展边界
 
@@ -175,17 +186,45 @@ C:\Users\<user>\AppData\Local\hermes\audit-trail\
 工作完成
   -> audit-trail Skill 整理记录字段
   -> mcp_hermes_context_append_audit_entry 写入 runtime audit-trail
-  -> send_message 发送 Telegram 短摘要
+  -> hermes-context MCP 直接调用 Telegram Bot API 发送短摘要
 ```
 
 约束：
 
 - 只有 `append_audit_entry` 成功后才发送 Telegram 通知。
 - Telegram 通知只包含短摘要、风险、目标和本地路径，不发送密钥或长日志全文。
-- 如果 `send_message` 失败，应返回“日志已落盘，Telegram 通知失败”的明确状态。
+- 如果 MCP 通知失败，应返回“日志已落盘，Telegram 通知失败”的明确状态，落盘结果不回滚。
 - 不通过 cron 自动轮询日志文件。
 
-### 2.6 Skill 安装与源码边界
+### 2.6 当前上下文目录
+
+当前上下文属于项目级上下文，但文件数量固定，作为新 Cursor 会话的最小接续入口。
+
+```text
+<project-root>\hermes\state\
+  current-context.md
+  current-context.json
+  archive\
+    <timestamp>-current-context.md
+```
+
+流程：
+
+```text
+Cursor 掌握一手上下文
+  -> Cursor 结构化总结 current-context
+  -> mcp_hermes_context_write_current_context 校验、脱敏、覆盖写入
+  -> 旧 current-context 归档
+  -> hermes-context MCP 直接发送 Telegram 动作通知
+```
+
+边界：
+
+- Hermes MCP 维护文件和版本，不推断 Cursor 隐藏上下文。
+- `current-context` 用于替代旧会话上下文，不作为每轮额外长上下文叠加。
+- Telegram 通知是即时反馈，不是权威记录。
+
+### 2.7 Skill 安装与源码边界
 
 Skill 目录分为运行层、平台源码层和项目层：
 
