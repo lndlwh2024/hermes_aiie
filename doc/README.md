@@ -434,6 +434,7 @@ hermes mcp test hermes-context
 | Lesson Writeback | 将已验证经验写回项目 `hermes/`。 | 仅在根因确认、修复验证后写回。 |
 | Audit Trail | 将 Hermes 工作日志写入 runtime 专用目录，并在成功后发送 Telegram 短通知。 | 用于记录已完成动作；不需要 Python、terminal、file、code_execution。 |
 | Current Context | 写入、读取、归档当前上下文快照。 | Cursor 在任务阶段结束或切新会话前调用，用于替代旧会话上下文。 |
+| Issue Ledger | 维护进行中问题台账，记录版本、时间、影响、状态、优先级、当前结论、方案和验证结果。 | 适合未关闭问题、跨窗口交接问题；关闭后可再沉淀为 incidents 复盘。 |
 | Action Notification | MCP 落盘成功后直接调用 Telegram Bot API 发通知。 | 不经过 Hermes LLM，不增加 Gemini 成本。 |
 | Safety Scan | 阻断明显密钥、token、私钥等敏感内容写入。 | 写回前自动生效；命中后应改写为脱敏描述。 |
 | Skills | 把可复用流程封装成按需加载能力。 | 用于复用排障流程；不要把长历史直接塞进 Skill。 |
@@ -469,6 +470,10 @@ hermes mcp test hermes-context
 - `get_current_context`
 - `list_current_context_versions`
 - `archive_current_context`
+- `upsert_issue`
+- `get_issue`
+- `list_issues`
+- `close_issue`
 
 用途：
 
@@ -479,6 +484,7 @@ hermes mcp test hermes-context
 - 写回新经验。
 - 写入、读取和汇总 Hermes 工作日志。
 - 写入、读取和归档当前上下文快照。
+- 写入、读取、筛选和关闭进行中问题台账。
 
 建议：
 
@@ -488,6 +494,7 @@ hermes mcp test hermes-context
 - `append_lesson` 只写入已验证结论，不写猜测。
 - `append_audit_entry` 仅写入 `AppData\Local\hermes\audit-trail`，不接受任意路径。
 - `write_current_context` 用于覆盖当前状态快照，并自动归档旧版本。
+- `upsert_issue` 用于记录当前仍需跟踪的问题；`close_issue` 只在修复和验证完成后调用。
 
 ### 10.4 工作日志
 
@@ -586,7 +593,45 @@ Skill/MCP：mcp_hermes_context_write_current_context（当前上下文写入）
 时间戳：...
 ```
 
-### 10.6 当前功能与权限矩阵
+### 10.6 进行中问题台账
+
+`issues` 用于记录当前仍需追踪的问题，不替代 `incidents` 的完整复盘。
+
+目标文件：
+
+```text
+H:\AIcode\Trae\news\hermes\issues\<issue-id>.md
+H:\AIcode\Trae\news\hermes\issues\index.json
+```
+
+工具：
+
+- `upsert_issue`：创建或更新问题，记录版本、时间、影响、状态、优先级、风险、当前结论、方案和验证项。
+- `get_issue`：读取单个问题。
+- `list_issues`：按状态或优先级列出问题。
+- `close_issue`：写入最终修复和验证结果，并标记为 closed。
+
+写入触发：
+
+- 当前问题仍未解决，但需要跨窗口或跨 Agent 延续。
+- 用户要求记录当前问题和解决方案。
+- 新发现的问题需要后续验证，不能只保存在聊天上下文里。
+- 问题修复并验证完成，需要关闭台账。
+
+写入成功后，MCP 直接发送 Telegram 通知：
+
+```text
+项目：news
+触发类型：issues（进行中问题）
+发起者：cursor
+Skill/MCP：mcp_hermes_context_upsert_issue（问题台账写入）
+结果：created
+路径：H:\AIcode\Trae\news\hermes\issues\<issue-id>.md
+风险：medium
+时间戳：...
+```
+
+### 10.7 当前功能与权限矩阵
 
 当前建议配置：
 
@@ -599,7 +644,7 @@ Skill/MCP：mcp_hermes_context_write_current_context（当前上下文写入）
 | `browser` | 开启 | 浏览公开网页。 | 中风险，默认不访问私有地址。 |
 | `cronjob` | 开启 | 计划任务能力。 | 中风险，仅用于低危提醒/汇总。 |
 | `task-queue MCP` | 开启 | 本地任务队列。 | 低风险，本地服务。 |
-| `hermes-context MCP` | 开启 | 上下文检索、写回、工作日志、当前上下文、动作通知。 | 低到中风险，工具固定边界。 |
+| `hermes-context MCP` | 开启 | 上下文检索、写回、工作日志、当前上下文、问题台账、动作通知。 | 低到中风险，工具固定边界。 |
 | `terminal` | 关闭 | 执行系统命令。 | 高风险，不为 Telegram Hermes 开启。 |
 | `file` | 关闭 | 任意文件读写/搜索。 | 高风险，不为工作日志开启。 |
 | `code_execution` | 关闭 | 运行代码/Python。 | 高风险，不为工作日志开启。 |
@@ -607,7 +652,7 @@ Skill/MCP：mcp_hermes_context_write_current_context（当前上下文写入）
 
 原则：如某个功能可通过受限 MCP 完成，不开启更大的通用权限。
 
-### 10.7 跨项目接入模板
+### 10.8 跨项目接入模板
 
 每个新项目需要准备自己的上下文目录和触发关键词，不复用 `news` 的业务关键词。
 
@@ -789,6 +834,7 @@ H:\AIcode\Trae\news\hermes\profile\project-profile.md
 H:\AIcode\Trae\news\hermes\incidents\*.md
 H:\AIcode\Trae\news\hermes\lessons\*.md
 H:\AIcode\Trae\news\hermes\skills\*.md
+H:\AIcode\Trae\news\hermes\issues\*.md
 H:\AIcode\Trae\news\hermes\state\current-context.md
 ```
 
@@ -866,7 +912,41 @@ H:\AIcode\Trae\news\hermes\profile\project-profile.md
 - 不直接改项目代码。
 - 写入成功后由 MCP 自动通知 Telegram。
 
-### 11.5 Skill 使用与能力说明
+### 11.5 进行中问题台账维护
+
+职责：
+
+- 当问题尚未关闭、需要跨窗口延续或需要后续验证时，维护项目问题台账。
+- 问题关闭时写入最终修复、验证结果和后续事项。
+
+读写文件：
+
+```text
+H:\AIcode\Trae\news\hermes\issues\<issue-id>.md
+H:\AIcode\Trae\news\hermes\issues\index.json
+```
+
+使用工具：
+
+- `mcp_hermes_context_upsert_issue`
+- `mcp_hermes_context_get_issue`
+- `mcp_hermes_context_list_issues`
+- `mcp_hermes_context_close_issue`
+
+触发条件：
+
+- 用户要求“记录当前问题/解决方案/问题台账”。
+- 发现问题仍未解决或仍需验证。
+- 新窗口需要继承当前问题状态。
+- 问题已完成修复和验证，需要关闭台账。
+
+限制：
+
+- 不把未验证的最终结论写成 incidents 复盘。
+- 不记录密钥、token、JWT、私钥。
+- 写入成功后由 MCP 自动通知 Telegram。
+
+### 11.6 Skill 使用与能力说明
 
 职责：
 
@@ -891,7 +971,7 @@ H:\agent\hermes\skills\software-development\audit-trail\SKILL.md
 - Skill 是流程说明，不是任意执行权限。
 - Skill 不得要求开启 Python、terminal、file、code_execution。
 
-### 11.6 平台新开发 Skill 列表
+### 11.7 平台新开发 Skill 列表
 
 | Skill | 功能 | 服务对象 | 触发条件 | 主要工具/文件 |
 | --- | --- | --- | --- | --- |
@@ -913,7 +993,7 @@ runtime Skill 目录：
 C:\Users\<user>\AppData\Local\hermes\skills\
 ```
 
-### 11.7 任务队列与消息确认
+### 11.8 任务队列与消息确认
 
 职责：
 
@@ -937,7 +1017,7 @@ Hermes task-queue 本地运行数据
 - task-queue 不是自动执行器。
 - 不用它绕过用户确认执行开发或部署。
 
-### 11.8 Telegram 通知
+### 11.9 Telegram 通知
 
 职责：
 
@@ -962,7 +1042,7 @@ Hermes task-queue 本地运行数据
 - Telegram 通知不是权威记录，权威记录以本地 Markdown/JSON/JSONL 文件为准。
 - 通知不经过 Hermes LLM，不增加 Gemini API 成本。
 
-### 11.9 浏览器与公开信息查询
+### 11.10 浏览器与公开信息查询
 
 职责：
 
@@ -978,7 +1058,7 @@ Hermes task-queue 本地运行数据
 - 不抓取敏感后台。
 - 不把网页信息直接当事实，应说明来源和不确定性。
 
-### 11.10 Cronjob 计划任务
+### 11.11 Cronjob 计划任务
 
 职责：
 
@@ -994,7 +1074,7 @@ Hermes task-queue 本地运行数据
 - 不创建高频任务。
 - 不执行代码、部署、数据库操作。
 
-### 11.11 明确禁止的职责
+### 11.12 明确禁止的职责
 
 Hermes 当前不得执行：
 
@@ -1008,7 +1088,7 @@ Hermes 当前不得执行：
 - 不保存密钥、token、JWT、私钥。
 - 不把项目专属上下文写入 `H:\agent\hermes`。
 
-### 11.12 当前项目路径
+### 11.13 当前项目路径
 
 ```text
 项目名：news

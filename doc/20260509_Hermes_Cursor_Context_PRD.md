@@ -1,8 +1,8 @@
 # PRD: Hermes + Cursor 上下文沉淀体系
 
-**版本**: v0.9  
+**版本**: v0.10  
 **日期**: 2026-05-12  
-**状态**: current-context + MCP 动作通知方案已实现  
+**状态**: current-context + issue ledger + MCP 动作通知方案已实现  
 **归属**: Hermes 独立 Agent 基础设施，服务多个 Cursor 项目
 
 ---
@@ -11,6 +11,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-12 | v0.10 | 增加 `issues` 进行中问题台账：提供 `upsert_issue`、`get_issue`、`list_issues`、`close_issue`，按项目写入 `<project-root>\hermes\issues\`，记录版本、时间、影响、状态、优先级和验证结论。 |
 | 2026-05-12 | v0.9 | 增加 `current-context` 当前上下文快照工具；将落盘成功通知改为 `hermes-context` MCP 内部直接调用 Telegram Bot API，不再要求 Hermes 额外调用 `send_message`。 |
 | 2026-05-10 | v0.8 | 增加工作日志 Telegram 通知要求：`audit-trail` Skill 在 MCP 落盘成功后调用 `send_message` 发送短摘要，不新增 Python/terminal/file/code_execution 权限。 |
 | 2026-05-10 | v0.7 | 增加受限工作日志能力：不为 Hermes 开启 Python/terminal/file/code_execution 权限，由 `hermes-context` MCP 将工作日志写入 Hermes runtime 的 `audit-trail` 专用目录。 |
@@ -41,6 +42,7 @@
 8. 支持 Hermes 记录工作日志，但不得为此开启 Python、terminal、file 或 code_execution 等高风险权限。
 9. 工作日志写入成功后，应通过 Telegram 发送简短状态通知，方便用户即时确认。
 10. 支持 `current-context` 当前上下文快照：由 Cursor 总结一手上下文，Hermes MCP 负责校验、落盘、归档、读取和通知，用于新 Cursor 会话替代旧会话上下文。
+11. 支持 `issues` 进行中问题台账：记录仍未关闭或需要后续验证的问题，包含版本号、时间、影响、状态、优先级、风险、当前结论、解决方案和验证项。
 
 ---
 
@@ -60,6 +62,7 @@
 - 更新 `audit-trail` Skill：写入日志后检查 MCP 返回的 `notification` 字段，不再额外调用 `send_message`。
 - 增加 `write_current_context`、`get_current_context`、`list_current_context_versions`、`archive_current_context` 工具。
 - 增加 MCP 内部动作通知：`append_audit_entry`、`append_lesson`、`write_current_context`、`archive_current_context` 落盘成功后直接通知 Telegram。
+- 增加 `upsert_issue`、`get_issue`、`list_issues`、`close_issue` 工具，问题台账写入 `<project-root>\hermes\issues\`，并在写入/关闭成功后直接通知 Telegram。
 
 ### 3.2 非范围
 

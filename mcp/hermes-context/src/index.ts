@@ -4,6 +4,7 @@ import { z } from "zod";
 import { appendAuditEntry, listAuditEntries, summarizeDailyAudit } from "./audit-trail-store.js";
 import { appendLesson, getProjectProfile, listContextSources, routeContextNeed, searchContext } from "./context-store.js";
 import { archiveCurrentContext, getCurrentContext, listCurrentContextVersions, writeCurrentContext } from "./current-context-store.js";
+import { closeIssue, getIssue, listIssues, upsertIssue } from "./issue-store.js";
 import { writeAudit } from "./audit.js";
 import { sendActionNotification } from "./notify.js";
 import { summarizeInput } from "./safety.js";
@@ -28,7 +29,9 @@ const notificationToolLabels: Record<string, string> = {
   append_lesson: "项目经验写回",
   append_audit_entry: "工作日志写入",
   write_current_context: "当前上下文写入",
-  archive_current_context: "当前上下文归档"
+  archive_current_context: "当前上下文归档",
+  upsert_issue: "问题台账写入",
+  close_issue: "问题台账关闭"
 };
 
 const notificationTriggerLabels: Record<string, string> = {
@@ -36,6 +39,7 @@ const notificationTriggerLabels: Record<string, string> = {
   incidents: "故障复盘",
   lessons: "项目经验",
   skills: "项目技能",
+  issues: "进行中问题",
   "audit-trail": "工作日志",
   "current-context": "当前上下文"
 };
@@ -68,12 +72,17 @@ server.resource(
               "write_current_context",
               "get_current_context",
               "list_current_context_versions",
-              "archive_current_context"
+              "archive_current_context",
+              "upsert_issue",
+              "get_issue",
+              "list_issues",
+              "close_issue"
             ],
             writes: {
               auditTrail: "AppData/Local/hermes/audit-trail",
               currentContext: "<project-root>/hermes/state",
-              lessons: "<project-root>/hermes/<category>"
+              lessons: "<project-root>/hermes/<category>",
+              issues: "<project-root>/hermes/issues"
             },
             safety: [
               "No Python, terminal, arbitrary file, or code execution permission is required.",
@@ -441,6 +450,132 @@ server.tool(
         risk: input.risk
       })
       : { ok: false, skipped: true, error: "no current context to archive" };
+    return textResponse({ ...result, notification });
+  }
+);
+
+server.tool(
+  "upsert_issue",
+  "Create or update a project issue ledger entry under <project-root>/hermes/issues and notify Telegram.",
+  {
+    project: z.string().min(1).default("news"),
+    issueId: z.string().optional(),
+    title: z.string().min(1),
+    status: z.enum(["open", "investigating", "fixed", "verified", "closed"]),
+    priority: z.enum(["P0", "P1", "P2", "P3"]),
+    version: z.string().min(1),
+    occurredAt: z.string().min(1),
+    impact: z.string().min(1),
+    owner: z.enum(["main", "pd", "ui", "as", "dev", "qa", "ad", "hermes", "other"]),
+    summary: z.string().min(1),
+    currentConclusion: z.string().min(1),
+    proposedSolution: z.string().min(1),
+    nextValidation: z.array(z.string()).default([]),
+    relatedFiles: z.array(z.string()).default([]),
+    evidence: z.array(z.string()).default([]),
+    risk: z.enum(["low", "medium", "high"]),
+    finalFix: z.string().optional(),
+    verificationResult: z.string().optional(),
+    followUp: z.string().optional(),
+    initiator: z.enum(["cursor", "hermes", "other"]).default("cursor")
+  },
+  async (input) => {
+    const { initiator, ...issueInput } = input;
+    const result = await audited(
+      "upsert_issue",
+      input.project,
+      { ...input, summary: `${input.summary.slice(0, 200)}${input.summary.length > 200 ? "..." : ""}` },
+      () => upsertIssue(issueInput),
+      undefined,
+      (output) => output.writtenTo
+    );
+    const notification = await sendActionNotification({
+      project: input.project,
+      triggerType: "issues",
+      triggerLabel: notificationTriggerLabels.issues,
+      initiator,
+      toolName: "mcp_hermes_context_upsert_issue",
+      toolLabel: notificationToolLabels.upsert_issue,
+      result: "success",
+      path: result.writtenTo,
+      risk: input.risk
+    });
+    return textResponse({ ...result, notification });
+  }
+);
+
+server.tool(
+  "get_issue",
+  "Read one project issue ledger entry by issueId.",
+  {
+    project: z.string().min(1).default("news"),
+    issueId: z.string().min(1)
+  },
+  async (input) => {
+    const result = await audited(
+      "get_issue",
+      input.project,
+      input,
+      () => getIssue(input.project, input.issueId),
+      (output) => [output.source]
+    );
+    return textResponse(result);
+  }
+);
+
+server.tool(
+  "list_issues",
+  "List project issue ledger entries, optionally filtered by status or priority.",
+  {
+    project: z.string().min(1).default("news"),
+    status: z.enum(["open", "investigating", "fixed", "verified", "closed"]).optional(),
+    priority: z.enum(["P0", "P1", "P2", "P3"]).optional(),
+    limit: z.number().int().positive().max(200).default(50)
+  },
+  async (input) => {
+    const result = await audited(
+      "list_issues",
+      input.project,
+      input,
+      () => listIssues(input),
+      (output) => [output.source]
+    );
+    return textResponse(result);
+  }
+);
+
+server.tool(
+  "close_issue",
+  "Close a project issue ledger entry with final fix and verification result, then notify Telegram.",
+  {
+    project: z.string().min(1).default("news"),
+    issueId: z.string().min(1),
+    finalFix: z.string().min(1),
+    verificationResult: z.string().min(1),
+    followUp: z.string().optional(),
+    initiator: z.enum(["cursor", "hermes", "other"]).default("cursor")
+  },
+  async (input) => {
+    const { initiator, ...closeInput } = input;
+    const result = await audited(
+      "close_issue",
+      input.project,
+      input,
+      () => closeIssue(closeInput),
+      undefined,
+      (output) => output.writtenTo
+    );
+    const notification = await sendActionNotification({
+      project: input.project,
+      triggerType: "issues",
+      triggerLabel: notificationTriggerLabels.issues,
+      initiator,
+      toolName: "mcp_hermes_context_close_issue",
+      toolLabel: notificationToolLabels.close_issue,
+      result: "success",
+      path: result.writtenTo,
+      risk: result.issue.risk
+    });
     return textResponse({ ...result, notification });
   }
 );

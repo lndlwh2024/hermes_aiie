@@ -42,7 +42,8 @@ const CATEGORY_TO_DIR: Record<ContextCategory, string> = {
   profile: "profile",
   incidents: "incidents",
   lessons: "lessons",
-  skills: "skills"
+  skills: "skills",
+  issues: "issues"
 };
 
 const GENERIC_CONTEXT_KEYWORDS = [
@@ -227,6 +228,7 @@ function extractKeywordSection(content: string): string[] {
 
 function chooseCategory(request: string): ContextCategory {
   const lower = request.toLowerCase();
+  if (/issue|问题|台账|当前故障|进行中/.test(lower)) return "issues";
   if (/skill|技能/.test(lower)) return "skills";
   if (/profile|概况|规则/.test(lower)) return "profile";
   if (/lesson|经验|总结/.test(lower)) return "lessons";

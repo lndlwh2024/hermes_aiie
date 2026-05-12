@@ -33,7 +33,7 @@ export const PROJECTS: Record<string, ProjectConfig> = {
   }
 };
 
-export const ALLOWED_CATEGORIES = ["profile", "incidents", "lessons", "skills"] as const;
+export const ALLOWED_CATEGORIES = ["profile", "incidents", "lessons", "skills", "issues"] as const;
 export type ContextCategory = (typeof ALLOWED_CATEGORIES)[number];
 
 export function getProject(project: string): ProjectConfig {

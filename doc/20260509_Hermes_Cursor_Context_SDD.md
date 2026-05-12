@@ -1,8 +1,8 @@
 # SDD: Hermes + Cursor 上下文沉淀体系概要设计
 
-**版本**: v0.9  
+**版本**: v0.10  
 **日期**: 2026-05-12  
-**状态**: current-context + MCP 动作通知方案已实现
+**状态**: current-context + issue ledger + MCP 动作通知方案已实现
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-12 | v0.10 | 增加 `issues` 问题台账目录与 MCP 工具设计，进行中问题单源写入 `<project-root>\hermes\issues\`，并纳入动作通知与上下文检索。 |
 | 2026-05-12 | v0.9 | 增加 `current-context` 目录与工具设计；动作通知从 Skill 双写改为 `hermes-context` MCP 内部直接调用 Telegram Bot API。 |
 | 2026-05-10 | v0.8 | 增加工作日志双写流程：`append_audit_entry` 成功后由 Skill 调用 `send_message` 发 Telegram 短摘要；通知是即时反馈，audit-trail 文件是权威记录。 |
 | 2026-05-10 | v0.7 | 增加受限工作日志 MCP 设计：`append_audit_entry`、`list_audit_entries`、`summarize_daily_audit` 仅访问 Hermes runtime 的 `audit-trail` 目录，不开放 Python/terminal/file/code_execution。 |
@@ -79,6 +80,10 @@ H:\agent\hermes\
       get_current_context
       list_current_context_versions
       archive_current_context
+      upsert_issue
+      get_issue
+      list_issues
+      close_issue
       get_project_profile
       list_context_sources
 ```
@@ -112,6 +117,10 @@ H:\agent\hermes\
     skills\
       <project-skill>.md
 
+    issues\
+      <issue-id>.md
+      index.json
+
     state\
       current-context.md
       current-context.json
@@ -126,6 +135,7 @@ H:\agent\hermes\
 - 不再双写，不再依赖镜像同步，避免内容分叉。
 - 项目专属 Skill 只保存在 `<project-root>\hermes\skills\`，不得保存在 `H:\agent\hermes\skills\<project>`。
 - `state\current-context.*` 保存当前上下文快照，用于新 Cursor 会话接续；旧版本归档到 `state\archive\`。
+- `issues\` 保存进行中问题台账，适合记录尚未关闭、仍需验证、或需要跨窗口延续的问题；历史复盘仍进入 `incidents\`。
 
 ### 2.3 Hermes runtime 与平台扩展边界
 
@@ -224,7 +234,34 @@ Cursor 掌握一手上下文
 - `current-context` 用于替代旧会话上下文，不作为每轮额外长上下文叠加。
 - Telegram 通知是即时反馈，不是权威记录。
 
-### 2.7 Skill 安装与源码边界
+### 2.7 进行中问题台账目录
+
+问题台账属于项目级上下文，用于保存“尚未关闭、需要后续验证、或新窗口必须继承”的问题状态。
+
+```text
+<project-root>\hermes\issues\
+  <issue-id>.md
+  index.json
+```
+
+流程：
+
+```text
+Cursor 或 Hermes 发现进行中问题
+  -> mcp_hermes_context_upsert_issue 写入/更新问题台账
+  -> hermes-context MCP 更新 index.json
+  -> hermes-context MCP 直接发送 Telegram 动作通知
+  -> 问题验证完成后 close_issue 写入 finalFix 与 verificationResult
+```
+
+边界：
+
+- `issues` 记录当前问题状态，不替代 `incidents` 的完整复盘。
+- `index.json` 仅用于列表和过滤，Markdown 文件是人工审阅入口。
+- 写入前执行敏感信息扫描，不接受任意路径。
+- `search_context` 可检索 `issues`，便于新 Cursor 会话快速定位当前问题。
+
+### 2.8 Skill 安装与源码边界
 
 Skill 目录分为运行层、平台源码层和项目层：
 

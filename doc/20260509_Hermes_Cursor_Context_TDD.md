@@ -1,8 +1,8 @@
 # TDD: Hermes + Cursor 上下文沉淀体系详细设计
 
-**版本**: v0.9  
+**版本**: v0.10  
 **日期**: 2026-05-12  
-**状态**: current-context + MCP 动作通知已实现
+**状态**: current-context + issue ledger + MCP 动作通知已实现
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-12 | v0.10 | 增加 `issue-store.ts`：提供问题台账 upsert/get/list/close，写入 `<project-root>\hermes\issues\`，维护 `index.json`，并复用 MCP 动作通知。 |
 | 2026-05-12 | v0.9 | 增加 `current-context-store.ts` 与 `notify.ts`：提供 current-context 写入/读取/归档/版本列表工具，MCP 内部直接发送 Telegram 动作通知，并支持 `HTTP_PROXY`/`HTTPS_PROXY` 代理环境。 |
 | 2026-05-10 | v0.8 | 增加 `audit-trail` Skill 双写流程：MCP 写入成功后调用 `send_message`，向 Telegram 发送短摘要；不改 Hermes Agent 核心。 |
 | 2026-05-10 | v0.7 | 增加受限工作日志 MCP 技术实现：`audit-trail-store.ts` 固定写入 Hermes runtime `audit-trail` 目录，提供追加、列表和日汇总工具，不依赖 Python。 |
@@ -133,6 +134,48 @@ sync denied:
 
 如需让项目 Skill 进入 Hermes runtime，必须先人工评审并提升为平台级通用 Skill，再从 `H:\agent\hermes\skills\<category>` 同步。
 
+### 2.4 Issue 条目
+
+用途：记录进行中的问题、当前结论、修复方案和下一步验证，避免跨窗口或跨 Agent 时丢失问题状态。
+
+存储：
+
+```text
+<project-root>\hermes\issues\
+  <issue-id>.md
+  index.json
+```
+
+核心字段：
+
+```json
+{
+  "project": "news",
+  "issueId": "mode3-r2-timeout",
+  "title": "模式3 R2 超时",
+  "status": "investigating",
+  "priority": "P1",
+  "version": "a4ed8e4",
+  "occurredAt": "2026-05-12T13:00:00+08:00",
+  "impact": "模式3 JSON 报告无法生成",
+  "owner": "main",
+  "summary": "...",
+  "currentConclusion": "...",
+  "proposedSolution": "...",
+  "nextValidation": ["..."],
+  "relatedFiles": ["..."],
+  "evidence": ["..."],
+  "risk": "medium"
+}
+```
+
+设计约束：
+
+- `issue-store.ts` 写入 Markdown 文件，并在 HTML 注释块内保存结构化 JSON。
+- `index.json` 从 Markdown 中的结构化 JSON 重建，避免索引与正文长期分叉。
+- `upsert_issue` 与 `close_issue` 成功后触发 Telegram 动作通知。
+- 写入前统一调用 `assertSafeContent()`。
+
 已知遗留目录：
 
 ```text
@@ -241,6 +284,61 @@ H:\agent\hermes\skills\news\
 
 用途：列出项目当前可用上下文源，便于审计。
 
+### 3.6 `upsert_issue`
+
+用途：创建或更新进行中问题台账。
+
+输入：
+
+```json
+{
+  "project": "news",
+  "issueId": "mode3-r2-timeout",
+  "title": "模式3 R2 超时",
+  "status": "investigating",
+  "priority": "P1",
+  "version": "a4ed8e4",
+  "occurredAt": "2026-05-12T13:00:00+08:00",
+  "impact": "模式3报告生成失败",
+  "owner": "main",
+  "summary": "...",
+  "currentConclusion": "...",
+  "proposedSolution": "...",
+  "nextValidation": ["验证 R2 超时配置"],
+  "relatedFiles": ["supabase/functions/..."],
+  "evidence": ["Edge Function timeout log"],
+  "risk": "medium",
+  "initiator": "cursor"
+}
+```
+
+输出：
+
+```json
+{
+  "ok": true,
+  "created": true,
+  "writtenTo": "<project-root>\\hermes\\issues\\mode3-r2-timeout.md",
+  "notification": {
+    "ok": true
+  }
+}
+```
+
+### 3.7 `get_issue` / `list_issues` / `close_issue`
+
+用途：
+
+- `get_issue`：按 `issueId` 读取单个问题。
+- `list_issues`：按 `status` 或 `priority` 过滤问题列表。
+- `close_issue`：写入 `finalFix`、`verificationResult`、`followUp`，并将状态置为 `closed`。
+
+要求：
+
+- `get_issue` 和 `list_issues` 只读，不触发 Telegram 通知。
+- `close_issue` 是写操作，成功后触发 Telegram 通知。
+- `list_issues` 每次从 Markdown 结构化 JSON 重建 `index.json`，保证索引可恢复。
+
 ---
 
 ## 4. 项目上下文单源规则
@@ -250,6 +348,7 @@ H:\agent\hermes\skills\news\
 - 故障复盘按类别写入 `incidents/`。
 - 可复用经验写入 `lessons/`。
 - 项目专属 Skill 文档写入 `skills/`。
+- 进行中问题台账写入 `issues/`。
 
 通用目录：
 

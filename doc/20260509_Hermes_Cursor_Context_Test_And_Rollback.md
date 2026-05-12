@@ -1,8 +1,8 @@
 # 测试与回滚: Hermes + Cursor 上下文沉淀体系
 
-**版本**: v0.9  
+**版本**: v0.10  
 **日期**: 2026-05-12  
-**状态**: current-context、MCP 动作通知与受限工作日志验证已实现
+**状态**: current-context、issue ledger、MCP 动作通知与受限工作日志验证已实现
 
 ---
 
@@ -10,6 +10,7 @@
 
 | 日期 | 版本 | 摘要 |
 | --- | --- | --- |
+| 2026-05-12 | v0.10 | 增加 `issues` 问题台账测试：工具发现、创建/更新/列表/关闭、敏感阻断、通知返回和索引重建。 |
 | 2026-05-12 | v0.9 | 增加 current-context 写入/读取/归档/版本列表测试；工作日志通知改为验证 MCP 返回 `notification` 字段，不再要求额外调用 `send_message`。 |
 | 2026-05-10 | v0.8 | 增加工作日志 Telegram 通知测试：`append_audit_entry` 成功后应调用 `send_message` 发短摘要；通知失败时需明确区分落盘成功和通知失败。 |
 | 2026-05-10 | v0.7 | 增加受限工作日志 MCP 测试：验证无需 Python/terminal/file/code_execution，可追加、读取、汇总 `AppData\Local\hermes\audit-trail` 下的日志，并阻断敏感内容。 |
@@ -258,6 +259,17 @@ hermes mcp test hermes-context
 - `route_context_need`
 - `search_context`
 - `append_lesson`
+- `append_audit_entry`
+- `list_audit_entries`
+- `summarize_daily_audit`
+- `write_current_context`
+- `get_current_context`
+- `list_current_context_versions`
+- `archive_current_context`
+- `upsert_issue`
+- `get_issue`
+- `list_issues`
+- `close_issue`
 
 ### 12.2 `get_project_profile`
 
@@ -353,6 +365,43 @@ hermes mcp test hermes-context
 
 ### 12.7 `sync_project_mirror`
 
+### 12.7 `issues` 问题台账
+
+创建或更新：
+
+```json
+{
+  "project": "news",
+  "issueId": "test-issue-ledger",
+  "title": "Issue ledger self-test",
+  "status": "investigating",
+  "priority": "P2",
+  "version": "self-test",
+  "occurredAt": "2026-05-12T13:00:00+08:00",
+  "impact": "验证 issues MCP 是否可用",
+  "owner": "main",
+  "summary": "创建一条自测问题台账",
+  "currentConclusion": "MCP 应写入 Markdown 和 index.json",
+  "proposedSolution": "执行 upsert/get/list/close 四类工具",
+  "nextValidation": ["get_issue 返回同一 issueId", "list_issues 可过滤 status"],
+  "relatedFiles": ["mcp/hermes-context/src/issue-store.ts"],
+  "evidence": ["self-test"],
+  "risk": "low",
+  "initiator": "cursor"
+}
+```
+
+期望：
+
+- 写入 `<project-root>\hermes\issues\test-issue-ledger.md`。
+- 更新 `<project-root>\hermes\issues\index.json`。
+- 返回 `notification` 字段；通知失败时不回滚落盘。
+- `get_issue` 可读取完整字段。
+- `list_issues status=investigating` 可列出该问题。
+- `close_issue` 写入 `finalFix` 和 `verificationResult` 后状态变为 `closed`。
+
+### 12.8 `sync_project_mirror`
+
 该工具已废弃。测试目标是确认工具列表中不再出现该工具，或调用时返回废弃说明。
 
 ---
@@ -370,6 +419,7 @@ GOOGLE_API_KEY=...
 期望：
 
 - `append_lesson` 返回 `SENSITIVE_CONTENT_BLOCKED`。
+- `upsert_issue` 返回 `SENSITIVE_CONTENT_BLOCKED`。
 - 不写入目标文件。
 - audit 不记录完整密钥。
 
@@ -425,6 +475,7 @@ GOOGLE_API_KEY=...
 13. 越权项目：`project=../../` 返回 `PROJECT_NOT_ALLOWED`。
 14. 审计日志：记录工具名、project、状态，不记录密钥。
 15. Git 状态：项目 `hermes/` 只出现预期文档，不出现运行数据或密钥。
+16. 问题台账：`upsert_issue` 写入 `hermes/issues`，`get_issue` 和 `list_issues` 可读，`close_issue` 可关闭并记录验证结论。
 
 ---
 
