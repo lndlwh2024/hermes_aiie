@@ -418,6 +418,60 @@ hermes mcp test hermes-context
 - `hermes-context` enabled。
 - `hermes-context` 可发现上下文工具。
 
+### 9.1 Cursor/AI IDE 直接对接 Hermes MCP
+
+如果目标是让 Cursor 新窗口直接调用 Hermes 上下文能力，需要把 `hermes-context` 注册到 Cursor 的 MCP 配置。Windows 全局配置文件通常为：
+
+```text
+C:\Users\<user>\.cursor\mcp.json
+```
+
+示例配置：
+
+```json
+{
+  "mcpServers": {
+    "hermes-context": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "H:\\agent\\hermes\\mcp\\hermes-context\\scripts\\Run-HermesContextMcp.cmd"
+      ],
+      "trust": true,
+      "allowTools": true,
+      "harnessEngineeringEnabled": true
+    }
+  }
+}
+```
+
+如果同一文件中已有其他 MCP server，应只在 `mcpServers` 下追加 `hermes-context`，不要覆盖已有配置。
+
+验证命令：
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+hermes mcp test hermes-context
+```
+
+预期：
+
+- `Connected`。
+- `Tools discovered: 16`。
+- 可看到 `get_current_context`、`list_issues`、`upsert_issue`、`close_issue` 等工具。
+
+Cursor 新窗口验证建议：
+
+```text
+请先使用 Hermes MCP 读取 news 项目的 current-context，并列出 open/investigating issues。
+```
+
+注意：
+
+- 已打开的 Cursor 聊天窗口通常不会动态刷新 MCP 工具列表；新开窗口或执行 `Developer: Reload Window` 后再验证。
+- `hermes-context` 是直接暴露给 Cursor 的项目上下文 MCP；`hermes-local` 是 Hermes Agent 自身的 MCP serve 入口，两者职责不同，可以同时存在。
+- `hermes-context` 不提供 terminal/file/code_execution/database/deploy 权限，只能按工具边界读写受控目录。
+
 ---
 
 ## 10. 常用能力
@@ -611,12 +665,46 @@ H:\AIcode\Trae\news\hermes\issues\index.json
 - `list_issues`：按状态或优先级列出问题。
 - `close_issue`：写入最终修复和验证结果，并标记为 closed。
 
+字段建议：
+
+```json
+{
+  "project": "news",
+  "issueId": "stable-short-id",
+  "title": "问题标题",
+  "status": "investigating",
+  "priority": "P1",
+  "version": "git-sha-or-release",
+  "occurredAt": "2026-05-12T14:00:00+08:00",
+  "impact": "影响范围",
+  "owner": "main",
+  "summary": "当前问题摘要",
+  "currentConclusion": "当前判断，未确认时要明确写未确认",
+  "proposedSolution": "拟定解决方案",
+  "nextValidation": ["下一步验证项"],
+  "relatedFiles": ["相关文件或模块"],
+  "evidence": ["日志、截图、命令结果摘要"],
+  "risk": "medium"
+}
+```
+
 写入触发：
 
 - 当前问题仍未解决，但需要跨窗口或跨 Agent 延续。
 - 用户要求记录当前问题和解决方案。
 - 新发现的问题需要后续验证，不能只保存在聊天上下文里。
 - 问题修复并验证完成，需要关闭台账。
+
+推荐工作流：
+
+```text
+发现问题
+  -> upsert_issue(status=open 或 investigating)
+  -> 新窗口启动时 get_current_context + list_issues(status=open/investigating)
+  -> 修复过程中继续 upsert_issue 更新 currentConclusion/proposedSolution/nextValidation
+  -> 修复验证完成后 close_issue
+  -> 如问题具有长期复盘价值，再 append_lesson(category=incidents)
+```
 
 写入成功后，MCP 直接发送 Telegram 通知：
 
@@ -625,11 +713,18 @@ H:\AIcode\Trae\news\hermes\issues\index.json
 触发类型：issues（进行中问题）
 发起者：cursor
 Skill/MCP：mcp_hermes_context_upsert_issue（问题台账写入）
-结果：created
+结果：success
 路径：H:\AIcode\Trae\news\hermes\issues\<issue-id>.md
 风险：medium
 时间戳：...
 ```
+
+读取用法：
+
+- 新窗口启动：优先 `get_current_context`，再 `list_issues status=open` 和 `list_issues status=investigating`。
+- 只查一个问题：用 `get_issue issueId=<issue-id>`。
+- 列出高优先级问题：用 `list_issues priority=P0/P1`。
+- 关闭问题：必须提供 `finalFix` 和 `verificationResult`，不要只把状态手工改成 closed。
 
 ### 10.7 当前功能与权限矩阵
 

@@ -57,6 +57,68 @@ aiide\agents\pm.md
 
 这些文件不是 Hermes runtime Skill，也不是 MCP 工具；它们是 Cursor、Trae 等 AI IDE 对接 Hermes AIIE 时可复制或引用的角色模板与流程规范。
 
+## Cursor 直接对接 Hermes MCP
+
+Cursor 新窗口如需直接读取 Hermes 项目上下文，应在 Cursor 全局 MCP 配置中注册 `hermes-context`。
+
+配置文件：
+
+```text
+C:\Users\<user>\.cursor\mcp.json
+```
+
+示例：
+
+```json
+{
+  "mcpServers": {
+    "hermes-context": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "H:\\agent\\hermes\\mcp\\hermes-context\\scripts\\Run-HermesContextMcp.cmd"
+      ],
+      "trust": true,
+      "allowTools": true,
+      "harnessEngineeringEnabled": true
+    }
+  }
+}
+```
+
+验证：
+
+```powershell
+$env:PYTHONIOENCODING='utf-8'
+hermes mcp test hermes-context
+```
+
+预期可发现 `get_current_context`、`list_issues`、`upsert_issue`、`close_issue` 等工具。已打开的 Cursor 窗口可能不会动态刷新 MCP 工具列表，建议新开窗口或执行 `Developer: Reload Window`。
+
+新窗口启动建议：
+
+```text
+请先使用 Hermes MCP 读取 news 项目的 current-context，并列出 open/investigating issues。
+```
+
+## Issues MCP
+
+`hermes-context` 提供进行中问题台账能力：
+
+- `upsert_issue`：创建或更新问题，字段包含版本号、时间、影响、状态、优先级、风险、当前结论、方案和验证项。
+- `get_issue`：读取单个问题。
+- `list_issues`：按状态或优先级列出问题。
+- `close_issue`：写入最终修复和验证结果，并关闭问题。
+
+默认写入：
+
+```text
+<project-root>\hermes\issues\<issue-id>.md
+<project-root>\hermes\issues\index.json
+```
+
+`upsert_issue` 和 `close_issue` 成功后会由 MCP 直接发送 Telegram 动作通知；通知是即时反馈，权威记录仍以 `hermes\issues\` 文件为准。
+
 ## 启动
 
 ```powershell
